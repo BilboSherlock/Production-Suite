@@ -1,0 +1,13 @@
+# personal files that should never be published
+*.studiobindahh.json
+studiobindahh-*.json
+*.fdx
+*.fountain
+*.pdf
+*.webm
+_*
+.claude/
+__pycache__/
+*.pyc
+Thumbs.db
+.DS_Store
