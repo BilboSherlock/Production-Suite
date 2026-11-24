@@ -310,6 +310,12 @@ textarea.cell { resize: none; overflow: hidden; display: block; line-height: 1.4
 .strip .st b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .strip .st span { display: block; opacity: .75; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .strip .pg { font-size: 12.5px; font-weight: 600; white-space: nowrap; opacity: .85; }
+/* split scenes: each part is its own strip, marked with a dashed edge and "pt 1/2" */
+.strip.part { border-left: 3px dashed rgba(0,0,0,.55); }
+.strip .ptag { display: block; font-size: 10.5px; font-weight: 700; opacity: .75; white-space: nowrap; }
+.strip .strip-more { border: 0; background: transparent; color: inherit; opacity: .45; padding: 4px; margin: -4px -6px -4px 0; border-radius: 2px; cursor: pointer; display: inline-flex; }
+.strip .strip-more:hover, .strip .strip-more:focus-visible { opacity: 1; background: rgba(0,0,0,.08); }
+html[data-touch] .strip .strip-more { opacity: .7; padding: 8px; }
 .s-int-day { --sbg: #ffffff; } .s-ext-day { --sbg: #fff2a8; } .s-int-night { --sbg: #b9d4f7; } .s-ext-night { --sbg: #b5e6c2; }
 .s-x { --sbg: #e6e6e6; }
 /* ---------- drag & drop (js/dnd.js) — the same look in every list ---------- */

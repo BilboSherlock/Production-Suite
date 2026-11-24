@@ -66,7 +66,7 @@ Views.breakdown = function (root) {
     center.innerHTML = '';
     const syn = h('textarea', { class: 'inp auto', rows: 2, placeholder: 'Scene synopsis — shows in the corkboard, stripboard and call sheets', value: meta.synopsis || '', oninput: e => { meta.synopsis = e.target.value; Store.touch(); autosize(e.target); } });
     const notes = h('textarea', { class: 'inp auto', rows: 2, placeholder: 'Production notes for this scene', value: meta.notes || '', oninput: e => { meta.notes = e.target.value; Store.touch(); autosize(e.target); } });
-    const day = P.days.findIndex(d => d.sceneIds.includes(s.id)), nShots = P.shots.filter(x => x.sceneId === s.id).length, nFrames = P.boards.filter(x => x.sceneId === s.id).length;
+    const dayNs = P.days.map((d, i) => d.sceneIds.includes(s.id) ? i + 1 : 0).filter(Boolean), day = dayNs.length ? dayNs[0] - 1 : -1, nShots = P.shots.filter(x => x.sceneId === s.id).length, nFrames = P.boards.filter(x => x.sceneId === s.id).length;
     const locSel = h('select', { class: 'inp', onchange: e => {
       if (e.target.value === '__new') { const l = { id: uid(), name: s.location || s.label, address: '', contact: '', phone: '', permit: 'Not needed', cost: '', notes: '', photo: '' }; P.locations.push(l); meta.locationId = l.id; toast(`Created location “${l.name}”`); }
       else meta.locationId = e.target.value; Store.touch(); drawScene(); } },
@@ -77,7 +77,7 @@ Views.breakdown = function (root) {
       tagElement(P, s.id, 'cast', v); draw(); } }, h('option', { value: '' }, '+ Add cast (non-speaking)'), allCharNames(P).filter(c => !cast.includes(c)).map(c => h('option', { value: c }, c)), h('option', { value: '__new' }, 'New character…'));
     center.append(h('div', { class: 'strip-card' },
       h('div', { class: 'row wrap', style: { marginBottom: '8px' } }, s.ioe ? h('span', { class: 'pill accent' }, s.ioe) : null, s.tod ? h('span', { class: 'pill accent' }, s.tod) : null, h('span', { class: 'pill' }, fmtEighths(s.eighths) + ' pgs'),
-        day >= 0 ? h('a', { class: 'pill', href: `#/p/${P.id}/schedule`, title: 'Open the schedule' }, `Shoot day ${day + 1}`) : h('span', { class: 'pill', style: { opacity: .6 } }, 'Not scheduled'),
+        day >= 0 ? h('a', { class: 'pill', href: `#/p/${P.id}/schedule`, title: dayNs.length > 1 ? 'Split over several days — open the schedule' : 'Open the schedule' }, dayNs.length > 1 ? `Shoot days ${dayNs.join(', ')}` : `Shoot day ${day + 1}`) : h('span', { class: 'pill', style: { opacity: .6 } }, 'Not scheduled'),
         h('a', { class: 'pill', href: `#/p/${P.id}/shots`, onclick: () => { UI.shotScene = s.id; } }, `${nShots} shot${nShots === 1 ? '' : 's'}`), h('a', { class: 'pill', href: `#/p/${P.id}/board` }, `${nFrames} frame${nFrames === 1 ? '' : 's'}`)),
       h('h2', {}, `${s.num}. ${s.label}`),
       h('div', { class: 'strip-grid' },

@@ -17,30 +17,19 @@
      daily report.
    =================================================================== */
 
-/* ---------- session data, shared by every suite ---------- */
-const LIVE_ISSUE_CATS = ['Weather', 'Equipment', 'Camera', 'Lighting', 'Sound', 'Cast', 'Crew', 'Location', 'Safety', 'Schedule', 'Creative', 'Transport', 'Other'];
-const LIVE_SEV = [['Low', '#8a8f98'], ['Medium', '#e8a40c'], ['High', '#e8830c'], ['Critical', '#e5484d']];
-const CHECK_STAGES = ['Called', 'En route', 'Arrived', 'In makeup', 'On set', 'Wrapped', 'No show'];
-const CHECK_HERE = ['Arrived', 'In makeup', 'On set'];
-const DELAY_REASONS = ['Weather', 'Equipment', 'Cast late', 'Camera', 'Lighting', 'Location', 'Safety', 'Creative', 'Other'];
-const sevColor = s => (LIVE_SEV.find(x => x[0] === s) || LIVE_SEV[1])[1];
-const sevRank = s => LIVE_SEV.findIndex(x => x[0] === s);
-
-const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
-const msMin = ms => { const d = new Date(ms); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+/* ---------- session data, shared by every suite ----------
+   The rules live in LiveModel (js/models/live.model.js); these names stay for the podcast recorder. */
+const LIVE_ISSUE_CATS = LiveModel.ISSUE_CATS, LIVE_SEV = LiveModel.SEV, CHECK_STAGES = LiveModel.CHECK_STAGES, CHECK_HERE = LiveModel.CHECK_HERE, DELAY_REASONS = LiveModel.DELAY_REASONS;
+const sevColor = s => LiveModel.sevColor(s), sevRank = s => LiveModel.sevRank(s);
+const nowMin = () => LiveModel.msMin(Date.now()), msMin = ms => LiveModel.msMin(ms), durTxt = m => LiveModel.durTxt(m);
 const clockTxt = m => fmtTime(fromMin(m));
-const durTxt = m => { const a = Math.abs(Math.round(m)); return a >= 60 ? `${Math.floor(a / 60)}h ${String(a % 60).padStart(2, '0')}m` : `${a}m`; };
-const todayISO = () => new Date().toISOString().slice(0, 10);
-
+const todayISO = () => localISODate();           // the local date (toISOString gave tomorrow's date late in the evening west of UTC)
 /* one record per live session: a shoot day (keyed by day id) or a recording session */
-function liveOf(P, day) {
-  P.live = P.live || { days: {} };
-  const L = P.live.days[day.id] = P.live.days[day.id] || {};
-  for (const [k, v] of Object.entries({ started: 0, ended: 0, items: {}, order: [], checkins: {}, issues: [], log: [], meal: { out: 0, in: 0 } })) if (L[k] === undefined) L[k] = v;
-  return L;
-}
-const liveLog = (L, msg, kind = '') => { L.log.unshift({ at: Date.now(), msg, kind }); if (L.log.length > 300) L.log.length = 300; };
-const dprOf = (P, day) => (P.reports[day.id] = P.reports[day.id] || newReport());
+const liveOf = (P, day) => LiveModel.ensure(P, day);
+const liveLog = (L, msg, kind = '') => LiveModel.log(L, msg, kind, Date.now());
+const dprOf = (P, day) => DprModel.ensure(P, day.id);
+/* change the session from a shared panel: through the screen's view model when it has one (cx.edit), else in place */
+const ldEdit = (cx, fn) => cx.edit ? cx.edit(fn) : (fn(cx.L, cx.P, Date.now()), cx.flash());
 
 /* ---------- fold & "show all" state ---------- */
 const LD = {
@@ -105,7 +94,7 @@ function ldTimeline(rows, { from, to, now, showNow, marks = [], onRow }) {
    cx = { P, L, key, redraw, flash, date, items: [{ id, label }], itemWord, issueCats, quickIssues,
           groups: [{ key, label, people: [{ p, sub, call }] }], taskFilter, report: () => report | null } */
 function ldIssueModal(cx, preset = {}) {
-  const { P, L } = cx, people = P.people.filter(p => p.name), t = Object.assign({ title: '', cat: (cx.issueCats || LIVE_ISSUE_CATS)[0], sev: 'Medium', owner: '', sceneId: '', notes: '' }, preset);
+  const { P } = cx, people = P.people.filter(p => p.name), t = Object.assign({ title: '', cat: (cx.issueCats || LIVE_ISSUE_CATS)[0], sev: 'Medium', owner: '', sceneId: '', notes: '' }, preset);
   const f = (l, el, wide) => h('div', { class: 'field', style: { marginBottom: 0, gridColumn: wide ? '1 / -1' : null } }, h('label', { class: 'lbl' }, l), el);
   const body = h('div', { class: 'fx-grid' }, f('What is the problem?', h('input', { class: 'inp', value: t.title, placeholder: 'Camera A won’t power on', oninput: e => { t.title = e.target.value; } }), true),
     f('Category', h('select', { class: 'inp', onchange: e => { t.cat = e.target.value; } }, (cx.issueCats || LIVE_ISSUE_CATS).map(c => h('option', { selected: c === t.cat }, c)))),
@@ -115,51 +104,40 @@ function ldIssueModal(cx, preset = {}) {
     f('Notes', h('textarea', { class: 'inp', rows: 2, value: t.notes, oninput: e => { t.notes = e.target.value; } }), true));
   modal({ title: preset.id ? 'Edit problem' : 'Log a problem', wide: true, body, buttons: [{ label: 'Cancel' }, { label: preset.id ? 'Save' : 'Log problem', primary: true, onClick: () => {
     if (!t.title.trim()) { toast('Describe the problem.', true); return false; }
-    if (preset.id) { Object.assign(L.issues.find(x => x.id === preset.id) || {}, t, { title: t.title.trim() }); }
+    if (preset.id) ldEdit(cx, L => LiveModel.updateIssue(L, preset.id, t));
     else ldAddIssue(cx, t);
-    cx.flash();
   } }] });
 }
-/* quick-logged problems pick a category from their wording ("generator noise" → Sound) */
-const ISSUE_WORDS = [['Sound', /\b(sound|audio|mic|noise|hum|buzz|boom|wind|lav|feedback|clip)/i], ['Weather', /\b(rain|weather|storm|sun|cloud|snow|cold|heat|hot)/i],
-  ['Camera', /\b(camera|lens|focus|card|battery|sensor|monitor|frame)/i], ['Lighting', /\b(light|lamp|flicker|bulb|gel|generator|genny|power)/i],
-  ['Cast', /\b(actor|cast|talent|guest|host|lines|makeup|wardrobe)/i], ['Crew', /\b(crew|operator|grip|gaffer)/i], ['Safety', /\b(injur|hurt|safety|fire|medic|hazard)/i],
-  ['Location', /\b(location|permit|neighbou?r|parking|venue|police)/i], ['Transport', /\b(van|truck|car|traffic|transport|driver)/i], ['Schedule', /\b(late|behind|delay|overtime|time)/i],
-  ['Equipment', /\b(cable|stand|tripod|kit|broken|gear|equipment|laptop|interface|connection)/i]];
-function ldGuessCat(text, cats) { const hit = ISSUE_WORDS.find(([c, re]) => cats.includes(c) && re.test(text)); return hit ? hit[0] : (cats.includes('Other') ? 'Other' : cats[cats.length - 1]); }
-function ldAddIssue(cx, t) {
-  const { L } = cx, iss = Object.assign({ id: uid(), at: Date.now(), cat: 'Other', sev: 'Medium', status: 'Open', owner: '', sceneId: '', notes: '', resolvedAt: 0 }, t, { title: t.title.trim() });
-  if (cx.stamp) iss.tc = cx.stamp();          // e.g. the recording timecode on a podcast
-  L.issues.unshift(iss); liveLog(L, `Problem logged (${iss.sev}): ${iss.title}`, iss.sev === 'Critical' || iss.sev === 'High' ? 'warn' : 'sys');
-  return iss;
-}
+function ldGuessCat(text, cats) { return LiveModel.guessCat(text, cats); }
+/** log a problem (stamped with the recording timecode on a podcast) */
+function ldAddIssue(cx, t) { return ldEdit(cx, (L, P, at) => LiveModel.addIssue(L, t, at, uid(), cx.stamp ? cx.stamp() : undefined)); }
 function ldProblems(cx) {
-  const { P, L } = cx, open = L.issues.filter(i => i.status !== 'Resolved'), crit = open.filter(i => i.sev === 'Critical' || i.sev === 'High');
-  const sorted = [...L.issues].sort((a, b) => ((a.status === 'Resolved') - (b.status === 'Resolved')) || (sevRank(b.sev) - sevRank(a.sev)) || (b.at - a.at));
-  const quick = h('input', { class: 'inp ld-quick', placeholder: '+ What went wrong? Enter to log', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { ldAddIssue(cx, { title: e.target.value, cat: ldGuessCat(e.target.value, cx.issueCats || LIVE_ISSUE_CATS) }); e.target.value = ''; cx.flash(); } } });
+  const { L } = cx, open = L.issues.filter(i => i.status !== 'Resolved'), crit = open.filter(i => i.sev === 'Critical' || i.sev === 'High');
+  const sorted = LiveModel.sortIssues(L.issues), st = (id, v) => ldEdit(cx, (L, P, at) => LiveModel.setIssueStatus(L, id, v, at));
+  const quick = h('input', { class: 'inp ld-quick', placeholder: '+ What went wrong? Enter to log', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { const v = e.target.value; e.target.value = ''; ldAddIssue(cx, { title: v, cat: ldGuessCat(v, cx.issueCats || LIVE_ISSUE_CATS) }); } } });
   const card = iss => {
     const sc = (cx.items || []).find(x => x.id === iss.sceneId), isOpen = iss.status !== 'Resolved';
     return h('div', { class: 'ld-issue' + (isOpen ? '' : ' done'), 'data-key': iss.id, style: { borderLeftColor: sevColor(iss.sev) } },
       h('div', { class: 'ld-row' }, h('span', { class: 'ld-sev', style: { background: sevColor(iss.sev) } }, iss.sev), h('b', { class: 'grow clip2' }, iss.title), h('span', { class: 'ld-time' }, iss.tc != null ? fmtTimeSec(iss.tc) : clockTxt(msMin(iss.at)))),
       h('div', { class: 'ld-meta' }, [iss.cat, sc && sc.label, iss.owner && '@' + iss.owner, iss.status !== 'Open' && iss.status].filter(Boolean).join(' · ')), iss.notes ? h('div', { class: 'ld-note' }, iss.notes) : null,
       h('div', { class: 'ld-acts' },
-        isOpen ? h('button', { class: 'btn sm', onclick: () => { iss.status = 'Resolved'; iss.resolvedAt = Date.now(); liveLog(L, `Resolved: ${iss.title}`, 'ok'); cx.flash(); } }, icon('check', 13), 'Resolve') : h('button', { class: 'btn sm ghost', onclick: () => { iss.status = 'Open'; iss.resolvedAt = 0; cx.flash(); } }, 'Reopen'),
-        isOpen && iss.status !== 'Monitoring' ? h('button', { class: 'btn sm ghost', onclick: () => { iss.status = 'Monitoring'; cx.flash(); } }, 'Monitor') : null,
-        !iss.taskId ? h('button', { class: 'btn sm ghost', title: 'Turn this problem into a task', onclick: () => { const t = newTask(iss.title, 'todo'); t.due = cx.date || todayISO(); t.priority = sevRank(iss.sev) >= 2 ? 'High' : 'Normal'; t.notes = iss.notes || ''; t.sceneId = iss.sceneId || ''; t.assignee = iss.owner || ''; P.tasks.push(t); iss.taskId = t.id; liveLog(L, `Task created: ${iss.title}`, 'sys'); cx.flash(); } }, icon('tasks', 13), 'Task') : h('span', { class: 'pill' }, 'task'),
-        h('span', { class: 'grow' }), ibtn('edit', 'Edit', () => ldIssueModal(cx, iss)), ibtn('trash', 'Delete', () => { L.issues = L.issues.filter(x => x !== iss); cx.flash(); }, 'danger')));
+        isOpen ? h('button', { class: 'btn sm', onclick: () => st(iss.id, 'Resolved') }, icon('check', 13), 'Resolve') : h('button', { class: 'btn sm ghost', onclick: () => st(iss.id, 'Open') }, 'Reopen'),
+        isOpen && iss.status !== 'Monitoring' ? h('button', { class: 'btn sm ghost', onclick: () => st(iss.id, 'Monitoring') }, 'Monitor') : null,
+        !iss.taskId ? h('button', { class: 'btn sm ghost', title: 'Turn this problem into a task', onclick: () => ldEdit(cx, (L, P, at) => LiveModel.issueToTask(P, L, iss.id, cx.date || todayISO(), at)) }, icon('tasks', 13), 'Task') : h('span', { class: 'pill' }, 'task'),
+        h('span', { class: 'grow' }), ibtn('edit', 'Edit', () => ldIssueModal(cx, iss)), ibtn('trash', 'Delete', () => ldEdit(cx, L => LiveModel.removeIssue(L, iss.id)), 'danger')));
   };
   return ldPanel(cx.key + ':problems', { title: 'Problems', ico: 'alert', count: open.length || '', tone: crit.length ? 'bad' : open.length ? 'warn' : '', hint: open.length ? `${open.length} open` : 'none open',
     tools: [h('button', { class: 'btn sm', onclick: () => ldIssueModal(cx) }, icon('plus', 13), 'Details')],
-    body: () => [quick, cx.quickIssues ? h('div', { class: 'ld-chips' }, cx.quickIssues.map(([label, cat, sev]) => h('button', { class: 'chip', onclick: () => { ldAddIssue(cx, { title: label, cat, sev }); cx.flash(); } }, '+ ' + label))) : null,
+    body: () => [quick, cx.quickIssues ? h('div', { class: 'ld-chips' }, cx.quickIssues.map(([label, cat, sev]) => h('button', { class: 'chip', onclick: () => ldAddIssue(cx, { title: label, cat, sev }) }, '+ ' + label))) : null,
       ldList(cx.key + ':problems', sorted, card, { limit: 4, empty: 'Nothing logged. When something goes wrong, log it here — it can become a task and goes into the daily report.' }, cx.redraw)] }, cx.redraw);
 }
 function ldTasks(cx) {
-  const { P, L } = cx, list = P.tasks.filter(t => t.status !== 'done' && (cx.taskFilter ? cx.taskFilter(t) : true)).sort((a, b) => ((b.status === 'blocked') - (a.status === 'blocked')) || ((b.status === 'doing') - (a.status === 'doing')) || (a.due || '9').localeCompare(b.due || '9'));
-  const quick = h('input', { class: 'inp ld-quick', placeholder: '+ Add a task for today, Enter', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { const t = newTask(e.target.value.trim(), 'todo'); t.due = cx.date || todayISO(); P.tasks.push(t); liveLog(L, `Task added: ${t.title}`, 'sys'); e.target.value = ''; cx.flash(); } } });
+  const { P } = cx, list = LiveModel.openTasks(P, cx.taskFilter);
+  const quick = h('input', { class: 'inp ld-quick', placeholder: '+ Add a task for today, Enter', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { const v = e.target.value; e.target.value = ''; ldEdit(cx, (L, P, at) => LiveModel.addTask(P, L, v, cx.date || todayISO(), at)); } } });
   const row = t => h('div', { class: 'ld-task' + (taskOverdue(t) ? ' overdue' : '') + (t.status === 'blocked' ? ' blocked' : ''), 'data-key': t.id },
-    h('button', { class: 'ld-chk s-' + t.status, title: 'Tap to move on: to do → in progress → done', 'aria-label': 'Advance task', onclick: () => { t.status = t.status === 'todo' || t.status === 'blocked' ? 'doing' : 'done'; if (t.status === 'done') liveLog(L, `Task done: ${t.title}`, 'ok'); cx.flash(); } }, t.status === 'doing' ? '◐' : ''),
+    h('button', { class: 'ld-chk s-' + t.status, title: 'Tap to move on: to do → in progress → done', 'aria-label': 'Advance task', onclick: () => ldEdit(cx, (L, P, at) => LiveModel.advanceTask(P, L, t.id, at)) }, t.status === 'doing' ? '◐' : ''),
     h('div', { class: 'grow', style: { minWidth: 0 } }, h('div', { class: 'clip2' }, t.title), h('div', { class: 'ld-meta' }, [t.assignee, t.dept, t.due && (taskOverdue(t) ? 'overdue · ' : '') + fmtDateShort(t.due), t.status === 'blocked' && 'BLOCKED'].filter(Boolean).join(' · '))),
-    t.status !== 'blocked' ? ibtn('alert', 'Mark blocked', () => { t.status = 'blocked'; cx.flash(); }) : ibtn('rotate', 'Unblock', () => { t.status = 'todo'; cx.flash(); }));
+    t.status !== 'blocked' ? ibtn('alert', 'Mark blocked', () => ldEdit(cx, (L, P) => LiveModel.setBlocked(P, t.id, true))) : ibtn('rotate', 'Unblock', () => ldEdit(cx, (L, P) => LiveModel.setBlocked(P, t.id, false))));
   const blocked = list.filter(t => t.status === 'blocked').length;
   return ldPanel(cx.key + ':tasks', { title: 'Tasks', ico: 'tasks', count: list.length || '', tone: blocked ? 'bad' : '', hint: blocked ? `${blocked} blocked` : list.length ? `${list.length} open` : 'all done',
     tools: [h('a', { class: 'btn sm ghost', href: `#/p/${P.id}/tasks` }, 'All tasks')],
@@ -174,17 +152,17 @@ function ldCheckin(cx) {
     const c = L.checkins[p.id] || { status: 'Called' }, cl = call != null ? toMin(call) : null, late = cl != null && c.at && CHECK_HERE.includes(c.status) && msMin(c.at) > cl + 5;
     return h('div', { class: 'ld-person st-' + c.status.replace(/\s/g, ''), 'data-key': p.id }, avatar(p, 32),
       h('div', { class: 'grow', style: { minWidth: 0 } }, h('div', { class: 'clip', style: { fontWeight: 600 } }, p.name || p.character || 'Unnamed'), h('div', { class: 'ld-meta clip' }, [sub, cl != null && `call ${clockTxt(cl)}`, c.at && `${c.status} ${clockTxt(msMin(c.at))}`, late && 'LATE'].filter(Boolean).join(' · '))),
-      h('select', { class: 'ld-st', 'aria-label': 'Status of ' + (p.name || 'person'), onchange: e => { L.checkins[p.id] = { status: e.target.value, at: Date.now() }; liveLog(L, `${p.name || p.character}: ${e.target.value}`, 'sys'); cx.flash(); } }, CHECK_STAGES.map(s => h('option', { selected: s === c.status }, s))));
+      h('select', { class: 'ld-st', 'aria-label': 'Status of ' + (p.name || 'person'), onchange: e => { const v = e.target.value; ldEdit(cx, (L, P, at) => LiveModel.checkIn(L, p, v, at)); } }, CHECK_STAGES.map(s => h('option', { selected: s === c.status }, s))));
   };
   return ldPanel(cx.key + ':checkin', { title: 'Check-in', ico: 'users', count: `${here}/${all.length}`, hint: `${here} of ${all.length} here`,
     tools: groups.length > 1 ? [h('div', { class: 'seg sm' }, groups.map(x => h('button', { class: x.key === g.key ? 'on' : '', onclick: () => { UI[wk] = x.key; cx.redraw(); } }, `${x.label} ${x.people.length}`)))] : null,
     body: () => ldList(cx.key + ':checkin:' + g.key, g.people, row, { limit: 6, empty: g.empty || 'Nobody listed.', cls: 'ld-list ld-people' }, cx.redraw) }, cx.redraw);
 }
 function ldActivity(cx) {
-  const { L } = cx, note = h('input', { class: 'inp ld-quick', placeholder: '+ Note for the log, Enter', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { liveLog(L, e.target.value.trim(), 'note'); e.target.value = ''; cx.flash(); } } });
+  const { L } = cx, note = h('input', { class: 'inp ld-quick', placeholder: '+ Note for the log, Enter', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { const v = e.target.value.trim(); e.target.value = ''; ldEdit(cx, (L, P, at) => LiveModel.log(L, v, 'note', at)); } } });
   const row = x => h('div', { class: 'ld-ev k-' + x.kind }, h('span', { class: 'ld-time' }, x.tc != null ? fmtTimeSec(x.tc) : clockTxt(msMin(x.at))), h('span', {}, x.msg));
   return ldPanel(cx.key + ':log', { title: 'Activity', ico: 'list', count: L.log.length || '', open: false, hint: L.log[0] ? L.log[0].msg.slice(0, 40) : '',
-    tools: cx.report ? [h('button', { class: 'btn sm ghost', title: 'Copy the log into the daily report notes', onclick: () => { const R = cx.report(); if (!R) return; R.notes = [R.notes, ...[...L.log].reverse().map(x => `${clockTxt(msMin(x.at))} ${x.msg}`)].filter(Boolean).join('\n'); Store.touch(); toast('Activity log added to the daily report'); } }, 'To report')] : null,
+    tools: cx.toReport ? [h('button', { class: 'btn sm ghost', title: 'Copy the log into the daily report notes', onclick: () => { cx.toReport(); toast('Activity log added to the daily report'); } }, 'To report')] : null,
     body: () => [note, ldList(cx.key + ':log', L.log, row, { limit: 8, cls: 'ld-list ld-log' }, cx.redraw)] }, cx.redraw);
 }
 

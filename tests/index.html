@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>StudioBindahh — tests</title>
+<style>body { font: 14px/1.5 ui-monospace, Consolas, monospace; margin: 24px; } pre { white-space: pre-wrap; } .fail { color: #c0392b; } .pass { color: #1e8449; }</style>
+</head>
+<body>
+<h1>StudioBindahh tests</h1>
+<p>Open with the app's server running (<code>python serve.py</code>, then <code>http://localhost:5173/tests/index.html</code>) or run <code>node tests/run.js</code>.</p>
+<h2 id="status">Running…</h2>
+<pre id="out"></pre>
+<!-- the DOM-free layers only: foundation, models, view models (add new ones here) -->
+<script src="../js/mvvm.js"></script>
+<script src="../js/models/tasks.model.js"></script>
+<script src="../js/viewmodels/tasks.vm.js"></script>
+<script src="../js/models/schedule.model.js"></script>
+<script src="../js/viewmodels/schedule.vm.js"></script>
+<script src="../js/models/callsheet.model.js"></script>
+<script src="../js/viewmodels/callsheet.vm.js"></script>
+<script src="../js/models/reports.model.js"></script>
+<script src="../js/viewmodels/reports.vm.js"></script>
+<script src="../js/models/dpr.model.js"></script>
+<script src="../js/viewmodels/dpr.vm.js"></script>
+<script src="../js/models/live.model.js"></script>
+<script src="../js/viewmodels/live.vm.js"></script>
+<script src="../js/models/podcast.model.js"></script>
+<script src="../js/models/podlive.model.js"></script>
+<script src="../js/viewmodels/podlive.vm.js"></script>
+<script src="../js/viewmodels/podcast.vm.js"></script>
+<script src="harness.js"></script>
+<script src="tasks.test.js"></script>
+<script src="schedule.test.js"></script>
+<script src="callsheet.test.js"></script>
+<script src="reports.test.js"></script>
+<script src="dpr.test.js"></script>
+<script src="live.test.js"></script>
+<script src="podlive.test.js"></script>
+<script src="podcast.test.js"></script>
+<script src="split.test.js"></script>
+<script>
+  const out = document.getElementById('out'), st = document.getElementById('status');
+  runTests(line => { out.textContent += line + '\n'; }).then(r => {
+    st.textContent = r.fails.length ? `${r.fails.length} failed` : `All ${r.pass} passed`;
+    st.className = r.fails.length ? 'fail' : 'pass';
+  });
+</script>
+</body>
+</html>

@@ -1,124 +1,26 @@
 'use strict';
 /* ===================================================================
-   Podcast & Audio Suite — Unscripted show planner, episode rundown,
-   live clock, guest interview prep, sponsor reads & show notes generator.
-   Works alongside the audio script editor for hybrid & audio drama shows.
+   Podcast Suite — episode planner (structured, freeflow or scripted shows;
+   audio-only or filmed), live clock, guest interview prep, sponsor reads,
+   cameras & set, gear and show notes; and the live recording desk.
+   Works alongside the script editor for hybrid & audio drama shows.
    =================================================================== */
 
-const POD = P => {
-  if (!P.podcast) P.podcast = {};
-  const pd = P.podcast;
-  pd.rundown = pd.rundown || [];
-  pd.guests = pd.guests || [];
-  pd.sponsors = pd.sponsors || [];
-  pd.gear = pd.gear || [];
-  pd.notes = pd.notes || { titleOptions: '', summary: '', links: '', audioCues: [] };
-  return pd;
-};
+/* The plan's data and rules live in PodcastModel (js/models/podcast.model.js); these names are kept
+   for the sample project and older code. */
+const POD = P => PodcastModel.ensure(P);
+const RUNDOWN_STATUS = PodcastModel.STATUS;
+const RUNDOWN_TONE = PodcastModel.TONE;
+const SPONSOR_SLOTS = PodcastModel.SLOTS;
+const POD_TEMPLATES = PodcastModel.TEMPLATES;
+const newSegment = (o = {}) => PodcastModel.segment(o);
+const newGuest = (o = {}) => PodcastModel.guest(o);
+const newSponsor = (o = {}) => PodcastModel.sponsor(o);
+const applyTemplate = (key, P, pd) => PodcastModel.applyTemplate(pd || POD(P), key);
 
-const RUNDOWN_STATUS = ['Planned', 'Recording', 'Covered', 'Cut'];
-const RUNDOWN_TONE = { Planned: '#8a8f98', Recording: '#e8830c', Covered: '#1e8e54', Cut: '#d6409f' };
-const SPONSOR_SLOTS = ['Pre-roll', 'Mid-roll 1', 'Mid-roll 2', 'Mid-roll 3', 'Post-roll'];
-
-const fmtTimeSec = s => {
-  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
-  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-};
-
-const parseDurMin = v => {
-  if (typeof v === 'number') return v;
-  const s = String(v || '').trim();
-  if (s.includes(':')) {
-    const parts = s.split(':');
-    return Math.max(0, (+parts[0] || 0) + (+parts[1] || 0) / 60);
-  }
-  return Math.max(0, parseFloat(s) || 0);
-};
-
-const newSegment = (o = {}) => Object.assign({
-  id: uid(),
-  title: 'Segment topic',
-  dur: 5,            // minutes
-  bullets: '',       // talking points / questions
-  cues: '',          // audio cue / stinger note
-  guestId: '',       // linked guest
-  sponsorId: '',     // linked sponsor read
-  status: 'Planned', // Planned | Recording | Covered | Cut
-  notes: '',
-}, o);
-
-const newGuest = (o = {}) => Object.assign({
-  id: uid(),
-  name: 'Guest Name',
-  pronouns: '',
-  title: 'Title / Affiliation',
-  bio: '',
-  questions: '1. What inspired your recent project?\n2. What is the biggest misconception about your field?\n3. What comes next?',
-  nogo: '',          // sensitive or off-limits topics
-  link: '',          // remote recording link (Zoom / Riverside / Meet)
-  timeZone: '',
-  plugs: '',         // Twitter/X, Website, Book link
-  release: 'Needed', // Needed | Sent | Signed
-}, o);
-
-const newSponsor = (o = {}) => Object.assign({
-  id: uid(),
-  name: 'Sponsor Name',
-  slot: 'Mid-roll 1',
-  duration: '60s',
-  code: '',
-  url: '',
-  points: '• Mention 30-day money-back guarantee\n• Emphasize ease of setup\n• Must state vanity URL clearly twice',
-  copy: 'This episode is brought to you by… Visit [URL] and use promo code [CODE] for 20% off.',
-  recorded: false,
-}, o);
-
-/* ---------------------------------------------------------------
-   Templates for rapid unscripted episode planning
-   --------------------------------------------------------------- */
-const POD_TEMPLATES = {
-  interview: {
-    label: 'Standard Interview (45m)',
-    desc: 'Cold open, banter, topic intro, in-depth guest interview, sponsor, listener Q&A, outro.',
-    segments: [
-      { title: 'Cold Open & Hook', dur: 2, bullets: 'Tease the most provocative quote or revelation from today’s guest.\nSoundbite from interview.', cues: 'Theme stinger' },
-      { title: 'Show Intro & Co-host Catch-up', dur: 4, bullets: 'Welcome listeners, quick life update or weekly anecdote.\nIntroduce episode theme.', cues: 'Theme music full, then duck under voice' },
-      { title: 'Topic Primer / Background Story', dur: 6, bullets: 'Set the stage: why this topic matters right now.\nKey news facts or recent developments.', cues: 'Ambient background bed' },
-      { title: 'Sponsor Read: Mid-Roll 1', dur: 1.5, bullets: 'Deliver sponsor talking points.\nMention promo code and vanity URL.', cues: 'Ad transition stinger' },
-      { title: 'Guest Interview & Deep Dive', dur: 22, bullets: 'Welcome guest. Career background.\nCore questions and discussion.\nAudience relevance and practical takeaways.', cues: '' },
-      { title: 'Audience Mailbag / Q&A', dur: 6, bullets: 'Read 1-2 listener questions from Discord or email.\nGuest and host reactions.', cues: '' },
-      { title: 'Outro, Guest Plugs & Credits', dur: 3.5, bullets: 'Where listeners can find the guest.\nNext week’s teaser.\nRate and review reminder, Patreon/community plugs.', cues: 'Outro music swell' },
-    ]
-  },
-  panel: {
-    label: 'Panel / Co-hosted News & Banter (60m)',
-    desc: '3-4 topic roundtables with co-hosts, ad breaks, hot takes and weekly picks.',
-    segments: [
-      { title: 'Intro & Banter: Icebreaker of the Week', dur: 6, bullets: 'Fun question or weekend recap among co-hosts.', cues: 'Intro theme' },
-      { title: 'Story 1: The Big Headline', dur: 16, bullets: 'Facts of the story.\nPanel reactions & debate.\nLong-term industry implications.', cues: '' },
-      { title: 'Sponsor Read: Mid-Roll 1', dur: 1.5, bullets: 'Sponsor read 1.', cues: 'Stinger' },
-      { title: 'Story 2: Deep Dive / Tech or Trend', dur: 15, bullets: 'Detailed breakdown.\nContrarian viewpoints.', cues: '' },
-      { title: 'Sponsor Read: Mid-Roll 2', dur: 1.5, bullets: 'Sponsor read 2.', cues: 'Stinger' },
-      { title: 'Story 3: Wildcard / Rapid Fire', dur: 12, bullets: '3 quick headlines, 60 seconds each host.', cues: '' },
-      { title: 'Picks of the Week & Wrap', dur: 8, bullets: 'Book, show, gadget, or life hack recommendations.\nSign-off.', cues: 'Outro theme' },
-    ]
-  },
-  solo: {
-    label: 'Solo Commentary / Deep Dive (25m)',
-    desc: 'Tight, focused solo episode with structured thoughts, research breakdown and takeaway.',
-    segments: [
-      { title: 'The Hook & Thesis', dur: 3, bullets: 'The central question or contrarian insight.', cues: 'Theme sting' },
-      { title: 'Part 1: How We Got Here (History/Context)', dur: 7, bullets: 'The origins and historical context.\nWhat everyone gets wrong.', cues: 'Subtle music bed' },
-      { title: 'Mid-roll Sponsor & Pause', dur: 1.5, bullets: 'Sponsor copy.', cues: 'Ad tone' },
-      { title: 'Part 2: The Real Consequence', dur: 9, bullets: 'The hidden angle or data breakdown.\nReal-world case study.', cues: 'Shift in bed music' },
-      { title: 'Conclusion & Practical Takeaway', dur: 4.5, bullets: 'What you can do with this information.\nClosing thought.', cues: 'Theme return' },
-    ]
-  }
-};
-
-/* ---------------------------------------------------------------
-   Safe Time & Duration Helpers
-   --------------------------------------------------------------- */
+/* mm:ss and minutes from "5" / "4:30" — see PodLiveModel (js/models/podlive.model.js) */
+const fmtTimeSec = s => PodLiveModel.fmtSec(s);
+const parseDurMin = v => PodLiveModel.parseDur(v);
 
 /* ---------------------------------------------------------------
    Studio Web Audio Synthesizer (Zero-dependency soundboard)
@@ -339,962 +241,344 @@ const PodTimer = {
 };
 
 /* ===============================================================
-   Main View: Rundown & Show Planner
+   Episode planner — VIEW. Rundown (or freeflow topics), cameras & set
+   for a filmed show, guest prep, sponsor reads, gear, show notes.
+   Rules: PodcastModel; screen state and actions: PodcastVM
+   (js/models/podcast.model.js, js/viewmodels/podcast.vm.js). The clock
+   strip drives the same recording session as the live desk (PodLiveVM).
    =============================================================== */
 Views.rundown = function (root) {
-  const P = Store.P;
-  const pd = POD(P);
-  UI.podTab = UI.podTab || 'rundown';
-  const tab = UI.podTab;
-
-  const holder = h('div', { class: 'page podcast-suite', style: { maxWidth: '1280px' } });
-
-  const TABS = [
-    ['rundown', 'Rundown & clock'],
-    ['guests', `Guest prep (${pd.guests.length})`],
-    ['sponsors', `Sponsor reads (${pd.sponsors.length})`],
-    ['gear', `Gear & mics (${(pd.gear || []).length})`],
-    ['notes', 'Show notes & chapters'],
-  ];
-
-  const tabsEl = h('div', { class: 'tabs rep-tabs', style: { marginBottom: '16px' } },
-    TABS.map(([k, l]) => h('button', {
-      class: k === tab ? 'on' : '',
-      onclick: () => { UI.podTab = k; Router.refresh(); }
-    }, l)));
-
-  holder.append(
-    h('div', { class: 'page-h' },
-      h('div', {},
-        h('h2', {}, P.title),
-        h('div', { class: 'muted small', style: { marginTop: '4px' } },
-          `Podcast & Audio Planner · ${pd.rundown.filter(s => s.status !== 'Cut').length} active segments · ${Math.round(pd.rundown.reduce((a, c) => c.status === 'Cut' ? a : a + parseDurMin(c.dur), 0))} min target`)),
-      h('span', { class: 'grow' }),
-      h('a', { class: 'btn', href: `#/p/${P.id}/script` }, icon('pen', 15), 'Open audio script')),
-    tabsEl);
-
-  const content = h('div', { class: 'pod-content' });
-  holder.append(content);
-  root.append(holder);
-
-  if (tab === 'rundown') renderRundownTab(content, P, pd);
-  else if (tab === 'guests') renderGuestsTab(content, P, pd);
-  else if (tab === 'sponsors') renderSponsorsTab(content, P, pd);
-  else if (tab === 'gear') renderPodGearTab(content, P, pd);
-  else if (tab === 'notes') renderNotesTab(content, P, pd);
-
-  const unsub = PodTimer.subscribe(() => {
-    const clockEl = $('#podLiveClock');
-    if (clockEl) clockEl.textContent = fmtTimeSec(PodTimer.elapsedSec);
-    const badge = $('#podAheadBehind');
-    if (badge && P.podcast && P.podcast.rundown) {
-      updateTimerPacing(badge, P.podcast.rundown);
-    }
-  });
-
-  return () => {
-    unsub();
-  };
-};
-
-/* ---------------------------------------------------------------
-   Sub-tab 1: Episode Rundown & Live Clock
-   --------------------------------------------------------------- */
-function renderRundownTab(root, P, pd) {
-  root.innerHTML = '';
-
-  // Calculate cumulative times (in minutes) for each segment
-  let cumMin = 0;
-  const segTimings = pd.rundown.map(s => {
-    const start = cumMin;
-    const dur = s.status === 'Cut' ? 0 : parseDurMin(s.dur);
-    cumMin += dur;
-    return { start, dur, end: cumMin };
-  });
-
-  const totalMin = cumMin;
-
-  // Live Timer Bar
-  const timerBar = h('div', { class: 'card pod-timer-bar', style: { padding: '14px 18px', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', background: 'var(--surface2)', borderColor: PodTimer.running ? 'var(--accent)' : 'var(--border)' } },
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-      h('span', { class: 'pill', style: { background: PodTimer.running ? 'var(--ok)' : 'var(--muted)', color: '#fff', fontWeight: 700 } }, PodTimer.running ? 'LIVE RECORDING' : 'CLOCK READY'),
-      h('b', { id: 'podLiveClock', style: { fontFamily: 'var(--mono)', fontSize: '26px', letterSpacing: '0.04em' } }, fmtTimeSec(PodTimer.elapsedSec))),
-    h('div', { id: 'podAheadBehind', class: 'small muted', style: { fontWeight: 600 } }, 'Pacing: On schedule'),
-    h('span', { class: 'grow' }),
-    h('div', { class: 'row', style: { gap: '8px' } },
-      h('button', {
-        class: 'btn primary sm',
-        onclick: () => { PodTimer.running ? PodTimer.pause() : PodTimer.start(); Router.refresh(); }
-      }, icon(PodTimer.running ? 'pause' : 'play', 14), PodTimer.running ? 'Pause' : 'Start recording'),
-      h('button', {
-        class: 'btn sm',
-        onclick: () => { if (confirm('Reset recording clock to 00:00?')) { PodTimer.reset(); Router.refresh(); } }
-      }, icon('rotate', 14), 'Reset'),
-      h('button', {
-        class: 'btn sm',
-        title: 'Log time marker for editing note',
-        onclick: () => {
-          const l = prompt('Marker description (e.g., retake intro, audio drop):');
-          if (l) { PodTimer.addMarker(l); toast(`Marker logged at ${fmtTimeSec(PodTimer.elapsedSec)}`); }
-        }
-      }, icon('pin', 14), 'Drop marker')));
-
-  // Toolbar
-  const toolbar = h('div', { class: 'toolbar', style: { marginBottom: '14px' } },
-    h('button', {
-      class: 'btn primary',
-      onclick: () => {
-        pd.rundown.push(newSegment({ title: `Segment ${pd.rundown.length + 1}` }));
-        Store.touch();
-        Router.refresh();
-      }
-    }, icon('plus', 15), 'Add segment'),
-    h('button', {
-      class: 'btn',
-      onclick: e => openTemplateMenu(e.currentTarget, P, pd)
-    }, icon('grid', 15), 'Apply template…'),
-    h('span', { class: 'small muted', style: { marginLeft: '8px' } }, `Total Planned Run: ~${Math.round(totalMin)} minutes (${fmtTimeSec(totalMin * 60)})`),
-    h('span', { class: 'grow' }),
-    h('button', {
-      class: 'btn sm ghost',
-      onclick: () => download(slug(P.title) + '-rundown.csv', exportRundownCSV(P, pd, segTimings), 'text/csv')
-    }, icon('download', 14), 'Export CSV'),
-    h('button', {
-      class: 'btn sm ghost',
-      onclick: () => copyRundownText(P, pd, segTimings)
-    }, icon('copy', 14), 'Copy summary'));
-
-  // Rundown Items List
-  const list = h('div', { class: 'pod-seg-list', style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
-
-  if (!pd.rundown.length) {
-    list.append(h('div', { class: 'empty' },
-      h('h3', {}, 'No segments planned yet'),
-      h('p', {}, 'Add your first segment or pick a ready-made podcast template to build your episode flow.'),
-      h('button', { class: 'btn primary', onclick: () => { applyTemplate('interview', P, pd); Router.refresh(); } }, 'Load standard interview template (45m)')));
-  } else {
-    pd.rundown.forEach((seg, idx) => {
-      const timing = segTimings[idx];
-      const isCut = seg.status === 'Cut';
-
-      const row = h('div', {
-        class: 'card pod-seg-card' + (isCut ? ' muted-seg' : ''),
-        style: {
-          padding: '12px 16px',
-          borderColor: seg.status === 'Recording' ? 'var(--accent)' : 'var(--border)',
-          opacity: isCut ? '0.6' : '1',
-          borderLeft: `4px solid ${RUNDOWN_TONE[seg.status] || 'var(--border)'}`
-        }
-      });
-
-      // Top Header: Timing, Title, Status, Controls
-      const topRow = h('div', { class: 'row', style: { gap: '12px', alignItems: 'center', marginBottom: '8px' } },
-        h('span', {
-          class: 'pill',
-          style: { fontFamily: 'var(--mono)', fontSize: '13px', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 700 }
-        }, `${fmtTimeSec(timing.start * 60)}`),
-        h('span', { class: 'small muted', style: { fontWeight: 600 } }, `#${idx + 1}`),
-        h('input', {
-          class: 'inp',
-          style: { fontWeight: 700, fontSize: '15px', flex: 1 },
-          value: seg.title,
-          placeholder: 'Segment title / topic…',
-          oninput: e => { seg.title = e.target.value; Store.touch(); }
-        }),
-        h('div', { class: 'row', style: { gap: '4px', alignItems: 'center' } },
-          h('input', {
-            class: 'inp',
-            type: 'number',
-            step: '0.5',
-            min: '0.5',
-            style: { width: '65px', textAlign: 'right', fontWeight: 600 },
-            value: seg.dur,
-            title: 'Target duration in minutes',
-            onchange: e => { seg.dur = Math.max(0.5, parseFloat(e.target.value) || 1); Store.touch(); Router.refresh(); }
-          }),
-          h('span', { class: 'small muted' }, 'min')),
-        h('select', {
-          class: 'inp sm',
-          style: { width: 'auto', fontWeight: 600 },
-          onchange: e => { seg.status = e.target.value; Store.touch(); Router.refresh(); }
-        }, RUNDOWN_STATUS.map(st => h('option', { value: st, selected: st === seg.status }, st))),
-        h('button', {
-          class: 'icon-btn',
-          title: 'Move up',
-          disabled: idx === 0,
-          onclick: () => { const s = pd.rundown.splice(idx, 1)[0]; pd.rundown.splice(idx - 1, 0, s); Store.touch(); Router.refresh(); }
-        }, icon('up', 14)),
-        h('button', {
-          class: 'icon-btn',
-          title: 'Move down',
-          disabled: idx === pd.rundown.length - 1,
-          onclick: () => { const s = pd.rundown.splice(idx, 1)[0]; pd.rundown.splice(idx + 1, 0, s); Store.touch(); Router.refresh(); }
-        }, icon('down', 14)),
-        h('button', {
-          class: 'icon-btn danger',
-          title: 'Delete segment',
-          onclick: () => { if (confirm(`Delete segment “${seg.title}”?`)) { pd.rundown.splice(idx, 1); Store.touch(); Router.refresh(); } }
-        }, icon('trash', 14)));
-
-      // Body: Talking Points, Cues, Links
-      const bodyRow = h('div', { class: 'row', style: { gap: '14px', alignItems: 'flex-start' } },
-        h('div', { style: { flex: 2 } },
-          h('label', { class: 'lbl small muted' }, 'Talking points & questions (one per line)'),
-          h('textarea', {
-            class: 'inp',
-            rows: Math.max(2, (seg.bullets || '').split('\n').length),
-            placeholder: '• Key points to hit\n• Questions to ask\n• Anecdotes or stats',
-            value: seg.bullets || '',
-            oninput: e => { seg.bullets = e.target.value; Store.touch(); }
-          })),
-        h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' } },
-          h('div', {},
-            h('label', { class: 'lbl small muted' }, 'Audio cue / Stinger / Drop'),
-            h('input', {
-              class: 'inp sm',
-              placeholder: 'e.g. Intro theme, sound bite, stinger',
-              value: seg.cues || '',
-              oninput: e => { seg.cues = e.target.value; Store.touch(); }
-            })),
-          h('div', {},
-            h('label', { class: 'lbl small muted' }, 'Attach Guest or Sponsor'),
-            h('div', { class: 'row', style: { gap: '6px' } },
-              h('select', {
-                class: 'inp sm',
-                style: { flex: 1 },
-                onchange: e => { seg.guestId = e.target.value; Store.touch(); }
-              }, h('option', { value: '' }, '(No guest linked)'),
-                pd.guests.map(g => h('option', { value: g.id, selected: g.id === seg.guestId }, 'Guest: ' + g.name))),
-              h('select', {
-                class: 'inp sm',
-                style: { flex: 1 },
-                onchange: e => { seg.sponsorId = e.target.value; Store.touch(); }
-              }, h('option', { value: '' }, '(No sponsor linked)'),
-                pd.sponsors.map(sp => h('option', { value: sp.id, selected: sp.id === seg.sponsorId }, 'Ad: ' + sp.name)))))));
-
-      row.append(topRow, bodyRow);
-      list.append(row);
-    });
-  }
-
-  root.append(timerBar, toolbar, list);
-}
-
-function updateTimerPacing(badge, rundown) {
-  let plannedElapsed = 0;
-  for (let i = 0; i < rundown.length; i++) {
-    const s = rundown[i];
-    if (s.status === 'Covered') plannedElapsed += parseDurMin(s.dur) * 60;
-    else if (s.status === 'Recording') { plannedElapsed += (parseDurMin(s.dur) * 60) / 2; break; }
-  }
-  const diffSec = PodTimer.elapsedSec - plannedElapsed;
-  if (Math.abs(diffSec) < 30) {
-    badge.className = 'small muted';
-    badge.textContent = 'Pacing: On schedule';
-  } else if (diffSec > 0) {
-    badge.className = 'small';
-    badge.style.color = 'var(--warn)';
-    badge.textContent = `Pacing: +${fmtTimeSec(diffSec)} behind schedule`;
-  } else {
-    badge.className = 'small';
-    badge.style.color = 'var(--ok)';
-    badge.textContent = `Pacing: -${fmtTimeSec(Math.abs(diffSec))} ahead of schedule`;
-  }
-}
-
-function openTemplateMenu(anchor, P, pd) {
-  menu(anchor, Object.entries(POD_TEMPLATES).map(([k, t]) => ({
-    label: t.label,
-    desc: t.desc,
-    onClick: () => {
-      if (pd.rundown.length && !confirm(`Replace current rundown with "${t.label}"?`)) return;
-      applyTemplate(k, P, pd);
-      Router.refresh();
-      toast(`Applied ${t.label}`);
-    }
-  })));
-}
-
-function applyTemplate(key, P, pd) {
-  const tpl = POD_TEMPLATES[key];
-  if (!tpl) return;
-  pd.rundown = tpl.segments.map(s => newSegment(s));
-  Store.touch();
-}
-
-function exportRundownCSV(P, pd, timings) {
-  const rows = [['Segment #', 'Start Time', 'Target (min)', 'Title', 'Talking Points', 'Audio Cues', 'Status']];
-  pd.rundown.forEach((s, i) => {
-    const tm = timings[i];
-    rows.push([
-      i + 1,
-      fmtTimeSec(tm.start * 60),
-      s.dur,
-      s.title,
-      (s.bullets || '').replace(/\n/g, ' | '),
-      s.cues || '',
-      s.status
-    ]);
-  });
-  return toCSV(rows);
-}
-
-function copyRundownText(P, pd, timings) {
-  const lines = [`${P.title.toUpperCase()} — EPISODE RUNDOWN`, '='.repeat(40), ''];
-  pd.rundown.forEach((s, i) => {
-    const tm = timings[i];
-    lines.push(`[${fmtTimeSec(tm.start * 60)}] #${i + 1}: ${s.title.toUpperCase()} (${s.dur} min)${s.status === 'Cut' ? ' [CUT]' : ''}`);
-    if (s.cues) lines.push(`   AUDIO CUE: ${s.cues}`);
-    if (s.bullets) {
-      s.bullets.split('\n').filter(Boolean).forEach(b => lines.push(`   • ${b.replace(/^[•\-*]\s*/, '')}`));
-    }
-    lines.push('');
-  });
-  navigator.clipboard.writeText(lines.join('\n'));
-  toast('Rundown copied to clipboard');
-}
-
-/* ---------------------------------------------------------------
-   Sub-tab 2: Guest Interview Prep
-   --------------------------------------------------------------- */
-function renderGuestsTab(root, P, pd) {
-  root.innerHTML = '';
-
-  const bar = h('div', { class: 'toolbar', style: { marginBottom: '16px' } },
-    h('button', {
-      class: 'btn primary',
-      onclick: () => {
-        pd.guests.push(newGuest());
-        Store.touch();
-        Router.refresh();
-      }
-    }, icon('plus', 15), 'Add guest'),
-    h('span', { class: 'small muted' }, `${pd.guests.length} guest profile${pd.guests.length === 1 ? '' : 's'} for this episode`),
-    h('span', { class: 'grow' }),
-    h('button', {
-      class: 'btn sm ghost',
-      onclick: () => copyGuestsDigest(pd)
-    }, icon('copy', 14), 'Copy all questions'));
-
-  const grid = h('div', { class: 'pod-guest-grid', style: { display: 'flex', flexDirection: 'column', gap: '16px' } });
-
-  if (!pd.guests.length) {
-    grid.append(h('div', { class: 'empty' },
-      h('h3', {}, 'No interview guests added yet'),
-      h('p', {}, 'Plan guest bios, talking points, questions to ask, sensitive topics to avoid, and remote call links.'),
-      h('button', { class: 'btn primary', onclick: () => { pd.guests.push(newGuest()); Store.touch(); Router.refresh(); } }, 'Add first guest')));
-  } else {
-    pd.guests.forEach((g, idx) => {
-      const card = h('div', { class: 'card', style: { padding: '16px 20px' } });
-
-      // Header row
-      const head = h('div', { class: 'row', style: { gap: '12px', alignItems: 'center', marginBottom: '14px' } },
-        h('span', { class: 'ico', style: { color: 'var(--accent)' } }, icon('user', 20)),
-        h('input', {
-          class: 'inp',
-          style: { fontWeight: 700, fontSize: '17px', flex: 1 },
-          value: g.name,
-          placeholder: 'Guest name…',
-          oninput: e => { g.name = e.target.value; Store.touch(); }
-        }),
-        h('input', {
-          class: 'inp',
-          style: { width: '100px' },
-          value: g.pronouns || '',
-          placeholder: 'they/them',
-          title: 'Pronouns',
-          oninput: e => { g.pronouns = e.target.value; Store.touch(); }
-        }),
-        h('select', {
-          class: 'inp sm',
-          style: { width: 'auto', fontWeight: 600 },
-          title: 'Guest appearance release status',
-          onchange: e => { g.release = e.target.value; Store.touch(); }
-        }, ['Needed', 'Sent', 'Signed'].map(r => h('option', { value: r, selected: r === g.release }, `Release: ${r}`))),
-        h('button', {
-          class: 'icon-btn danger',
-          title: 'Delete guest',
-          onclick: () => { if (confirm(`Remove guest ${g.name}?`)) { pd.guests.splice(idx, 1); Store.touch(); Router.refresh(); } }
-        }, icon('trash', 14)));
-
-      // Info row: Title, Remote Link, Timezone
-      const infoRow = h('div', { class: 'row wrap', style: { gap: '12px', marginBottom: '12px' } },
-        h('div', { style: { flex: 2, minWidth: '220px' } },
-          h('label', { class: 'lbl small muted' }, 'Title / Credentials / Organization'),
-          h('input', {
-            class: 'inp',
-            value: g.title || '',
-            placeholder: 'e.g. Lead Astronomer, Author of Signal',
-            oninput: e => { g.title = e.target.value; Store.touch(); }
-          })),
-        h('div', { style: { flex: 2, minWidth: '220px' } },
-          h('label', { class: 'lbl small muted' }, 'Remote Recording Link (Riverside / Squadcast / Zoom)'),
-          h('div', { class: 'row', style: { gap: '6px' } },
-            h('input', {
-              class: 'inp',
-              value: g.link || '',
-              placeholder: 'https://riverside.fm/studio/...',
-              oninput: e => { g.link = e.target.value; Store.touch(); }
-            }),
-            g.link ? h('a', {
-              class: 'btn sm',
-              href: g.link.startsWith('http') ? g.link : 'https://' + g.link,
-              target: '_blank',
-              rel: 'noreferrer'
-            }, 'Open') : null)),
-        h('div', { style: { flex: 1, minWidth: '130px' } },
-          h('label', { class: 'lbl small muted' }, 'Time Zone / Location'),
-          h('input', {
-            class: 'inp',
-            value: g.timeZone || '',
-            placeholder: 'EST (UTC-5)',
-            oninput: e => { g.timeZone = e.target.value; Store.touch(); }
-          })));
-
-      // Bio & Plugs
-      const bioRow = h('div', { class: 'row wrap', style: { gap: '12px', marginBottom: '12px' } },
-        h('div', { style: { flex: 2, minWidth: '280px' } },
-          h('label', { class: 'lbl small muted' }, 'Short Bio & Context'),
-          h('textarea', {
-            class: 'inp',
-            rows: 2,
-            value: g.bio || '',
-            placeholder: 'Brief background to read on air during introduction…',
-            oninput: e => { g.bio = e.target.value; Store.touch(); }
-          })),
-        h('div', { style: { flex: 1, minWidth: '200px' } },
-          h('label', { class: 'lbl small muted' }, 'Guest Plugs & Socials (Website, X, Book)'),
-          h('textarea', {
-            class: 'inp',
-            rows: 2,
-            value: g.plugs || '',
-            placeholder: '@handle, website.com, new book title',
-            oninput: e => { g.plugs = e.target.value; Store.touch(); }
-          })));
-
-      // Interview Questions Checklist & Sensitive Topics
-      const qRow = h('div', { class: 'row wrap', style: { gap: '14px', alignItems: 'flex-start' } },
-        h('div', { style: { flex: 2, minWidth: '300px' } },
-          h('label', { class: 'lbl small muted' }, 'Core Questions & Discussion Angles'),
-          h('textarea', {
-            class: 'inp',
-            rows: 5,
-            value: g.questions || '',
-            placeholder: '1. First question…\n2. Follow-up angle…\n3. Practical advice…',
-            oninput: e => { g.questions = e.target.value; Store.touch(); }
-          })),
-        h('div', { style: { flex: 1, minWidth: '240px' } },
-          h('label', { class: 'lbl small', style: { color: 'var(--warn)', fontWeight: 600 } }, '⚠️ Sensitive / No-Go Topics (Do NOT ask)'),
-          h('textarea', {
-            class: 'inp',
-            rows: 5,
-            style: { borderColor: g.nogo ? 'var(--warn)' : 'var(--border)', background: g.nogo ? 'color-mix(in srgb, var(--warn) 6%, transparent)' : 'transparent' },
-            value: g.nogo || '',
-            placeholder: 'Topics the guest requested to avoid, legal non-disclosures, private topics…',
-            oninput: e => { g.nogo = e.target.value; Store.touch(); }
-          })));
-
-      card.append(head, infoRow, bioRow, qRow);
-      grid.append(card);
-    });
-  }
-
-  root.append(bar, grid);
-}
-
-function copyGuestsDigest(pd) {
-  const lines = ['GUEST INTERVIEW PREPARATION', '='.repeat(35), ''];
-  pd.guests.forEach(g => {
-    lines.push(`GUEST: ${g.name} (${g.pronouns || 'N/A'})`);
-    if (g.title) lines.push(`TITLE: ${g.title}`);
-    if (g.link) lines.push(`RECORDING LINK: ${g.link}`);
-    if (g.bio) lines.push(`BIO: ${g.bio}`);
-    if (g.nogo) lines.push(`⚠️ DO NOT DISCUSS: ${g.nogo}`);
-    lines.push('QUESTIONS:');
-    (g.questions || '').split('\n').filter(Boolean).forEach(q => lines.push(`  ${q}`));
-    lines.push('');
-  });
-  navigator.clipboard.writeText(lines.join('\n'));
-  toast('Guest interview notes copied');
-}
-
-/* ---------------------------------------------------------------
-   Sub-tab 3: Sponsor Reads & Ad Copy
-   --------------------------------------------------------------- */
-function renderSponsorsTab(root, P, pd) {
-  root.innerHTML = '';
-
-  const bar = h('div', { class: 'toolbar', style: { marginBottom: '16px' } },
-    h('button', {
-      class: 'btn primary',
-      onclick: () => {
-        pd.sponsors.push(newSponsor());
-        Store.touch();
-        Router.refresh();
-      }
-    }, icon('plus', 15), 'Add sponsor read'),
-    h('span', { class: 'small muted' }, `${pd.sponsors.length} ad read campaign${pd.sponsors.length === 1 ? '' : 's'}`),
-    h('span', { class: 'grow' }),
-    h('button', {
-      class: 'btn sm ghost',
-      onclick: () => copyAllSponsorsText(pd)
-    }, icon('copy', 14), 'Copy all ad copy'));
-
-  const grid = h('div', { class: 'pod-sponsor-grid', style: { display: 'flex', flexDirection: 'column', gap: '16px' } });
-
-  if (!pd.sponsors.length) {
-    grid.append(h('div', { class: 'empty' },
-      h('h3', {}, 'No sponsor reads configured'),
-      h('p', {}, 'Track sponsor campaigns, promo codes, mandatory talking points, and full host-read ad copy.'),
-      h('button', { class: 'btn primary', onclick: () => { pd.sponsors.push(newSponsor()); Store.touch(); Router.refresh(); } }, 'Add first sponsor read')));
-  } else {
-    pd.sponsors.forEach((sp, idx) => {
-      const card = h('div', { class: 'card', style: { padding: '16px 20px', borderLeft: sp.recorded ? '4px solid var(--ok)' : '4px solid var(--accent)' } });
-
-      const topRow = h('div', { class: 'row', style: { gap: '12px', alignItems: 'center', marginBottom: '12px' } },
-        h('span', { class: 'ico', style: { color: 'var(--accent)' } }, icon('dollar', 18)),
-        h('input', {
-          class: 'inp',
-          style: { fontWeight: 700, fontSize: '16px', flex: 2 },
-          value: sp.name,
-          placeholder: 'Sponsor / Brand name…',
-          oninput: e => { sp.name = e.target.value; Store.touch(); }
-        }),
-        h('select', {
-          class: 'inp sm',
-          style: { flex: 1 },
-          onchange: e => { sp.slot = e.target.value; Store.touch(); }
-        }, SPONSOR_SLOTS.map(sl => h('option', { value: sl, selected: sl === sp.slot }, sl))),
-        h('select', {
-          class: 'inp sm',
-          style: { width: '80px' },
-          onchange: e => { sp.duration = e.target.value; Store.touch(); }
-        }, ['30s', '60s', '90s'].map(d => h('option', { value: d, selected: d === sp.duration }, d))),
-        h('label', { class: 'row small', style: { gap: '6px', fontWeight: 600, cursor: 'pointer' } },
-          h('input', {
-            type: 'checkbox',
-            checked: !!sp.recorded,
-            onchange: e => { sp.recorded = e.target.checked; Store.touch(); Router.refresh(); }
-          }),
-          'Recorded'),
-        h('button', {
-          class: 'icon-btn danger',
-          title: 'Delete sponsor',
-          onclick: () => { if (confirm(`Remove sponsor read for ${sp.name}?`)) { pd.sponsors.splice(idx, 1); Store.touch(); Router.refresh(); } }
-        }, icon('trash', 14)));
-
-      const metaRow = h('div', { class: 'row wrap', style: { gap: '12px', marginBottom: '12px' } },
-        h('div', { style: { flex: 1, minWidth: '180px' } },
-          h('label', { class: 'lbl small muted' }, 'Promo Code'),
-          h('input', {
-            class: 'inp',
-            style: { fontFamily: 'var(--mono)', fontWeight: 700 },
-            value: sp.code || '',
-            placeholder: 'e.g. PODCAST20',
-            oninput: e => { sp.code = e.target.value; Store.touch(); }
-          })),
-        h('div', { style: { flex: 2, minWidth: '240px' } },
-          h('label', { class: 'lbl small muted' }, 'Vanity URL / Landing Page'),
-          h('input', {
-            class: 'inp',
-            value: sp.url || '',
-            placeholder: 'e.g. brand.com/podcast',
-            oninput: e => { sp.url = e.target.value; Store.touch(); }
-          })));
-
-      const copyRow = h('div', { class: 'row wrap', style: { gap: '14px', alignItems: 'flex-start' } },
-        h('div', { style: { flex: 2, minWidth: '320px' } },
-          h('div', { class: 'row', style: { marginBottom: '4px' } },
-            h('label', { class: 'lbl small muted' }, 'Host-Read Ad Copy'),
-            h('span', { class: 'grow' }),
-            h('button', {
-              class: 'btn sm ghost',
-              onclick: () => { navigator.clipboard.writeText(sp.copy || ''); toast('Ad copy copied'); }
-            }, icon('copy', 13), 'Copy copy')),
-          h('textarea', {
-            class: 'inp',
-            rows: 5,
-            style: { fontStyle: 'italic', lineHeight: '1.45' },
-            value: sp.copy || '',
-            placeholder: 'Scripted host read text to read on mic…',
-            oninput: e => { sp.copy = e.target.value; Store.touch(); }
-          })),
-        h('div', { style: { flex: 1, minWidth: '240px' } },
-          h('label', { class: 'lbl small muted' }, 'Mandatory Points & Claims'),
-          h('textarea', {
-            class: 'inp',
-            rows: 5,
-            value: sp.points || '',
-            placeholder: '• Must mention offer expires Dec 31\n• Mention free shipping…',
-            oninput: e => { sp.points = e.target.value; Store.touch(); }
-          })));
-
-      card.append(topRow, metaRow, copyRow);
-      grid.append(card);
-    });
-  }
-
-  root.append(bar, grid);
-}
-
-function copyAllSponsorsText(pd) {
-  const lines = ['EPISODE SPONSOR READS', '='.repeat(30), ''];
-  pd.sponsors.forEach(s => {
-    lines.push(`SPONSOR: ${s.name} (${s.slot} - ${s.duration})`);
-    if (s.code) lines.push(`CODE: ${s.code}`);
-    if (s.url) lines.push(`URL: ${s.url}`);
-    if (s.points) lines.push(`MANDATORY POINTS:\n${s.points}`);
-    if (s.copy) lines.push(`SCRIPT:\n${s.copy}`);
-    lines.push('\n----------------------------------------\n');
-  });
-  navigator.clipboard.writeText(lines.join('\n'));
-  toast('All sponsor reads copied');
-}
-
-/* ---------------------------------------------------------------
-   Sub-tab 4: Studio Gear & Mics Manager
-   --------------------------------------------------------------- */
-function renderPodGearTab(root, P, pd) {
-  root.innerHTML = '';
-  pd.gear = pd.gear || [];
-  let q = '', st = '';
-
-  const wrap = h('div');
-  root.append(wrap, h('datalist', { id: 'dl-podgearsrc' }, ['Owned', ...new Set(pd.gear.map(g => g.source).filter(x => x && x !== 'Owned'))].map(x => h('option', { value: x }))));
-
-  const days = g => +g.days || P.days.length || 1;
-  const cost = g => (+g.qty || 0) * (+g.rate || 0) * days(g);
-  const csvRows = () => [['Category', 'Item', 'Qty', 'Source', 'Rate/day', 'Days', 'Total', 'Pick-up', 'Return', 'Status', 'Notes'], ...pd.gear.map(g => [g.cat, g.name, g.qty, g.source, g.rate, days(g), cost(g), g.pickup, g.ret, g.status, g.notes])];
-
-  function toBudget() {
-    let n = 0;
-    pd.gear.filter(g => (+g.rate || 0) > 0).forEach(g => {
-      const key = 'gear:' + g.id;
-      let l = P.budget.find(x => x.auto === key);
-      if (!l) { l = { id: uid(), auto: key }; P.budget.push(l); }
-      const cat = (typeof PODCAST_GEAR_BUDGET !== 'undefined' && PODCAST_GEAR_BUDGET[g.cat]) || 'Audio Engineering';
-      Object.assign(l, {
-        cat,
-        desc: `${g.name}${g.source && g.source !== 'Owned' ? ' (' + g.source + ')' : ''}`,
-        qty: (+g.qty || 1) * days(g),
-        unit: 'Day',
-        rate: +g.rate || 0
-      });
-      n++;
-    });
-    Store.touch();
-    toast(n ? `Budget updated with ${n} gear line${n > 1 ? 's' : ''}` : 'Add a day rate to gear items first.', !n);
-  }
+  const vm = new PodcastVM(), rec = new PodLiveVM();
+  const wrap = h('div', { class: 'page podcast-suite', style: { maxWidth: '1280px' } }); root.append(wrap);
+  const f = PodLiveModel.fmtSec, M = PodcastModel;
+  const copy = (txt, msg) => { navigator.clipboard.writeText(txt); toast(msg); };
+  const TONE = { good: 'var(--ok)', warn: 'var(--warn)', bad: 'var(--danger)', info: 'var(--accent)', muted: 'var(--muted)' };
+  const lbl = (t, o = {}) => h('label', Object.assign({ class: 'lbl small muted' }, o), t);
+  const field = (label, el, style = {}) => h('div', { style: Object.assign({ flex: 1, minWidth: '200px' }, style) }, lbl(label), el);
+  const opts = (list, cur, fmt = x => x) => list.map(x => h('option', { value: x, selected: x === cur }, fmt(x)));
 
   function draw() {
-    const cats = typeof PODCAST_GEAR_CATS !== 'undefined' ? PODCAST_GEAR_CATS : [
-      'Microphones', 'Audio Interfaces & Mixers', 'Recorders & Preamps',
-      'Headphones & Monitoring', 'Stands, Arms & Shockmounts', 'Cables, Adapters & Power',
-      'Acoustic Treatment & Shields', 'Cameras & Video (Vodcast)', 'Storage & Media', 'Other / Field Kit'
-    ];
-    const statuses = typeof PODCAST_GEAR_STATUS !== 'undefined' ? PODCAST_GEAR_STATUS : ['Needed', 'Reserved', 'Picked up', 'In Studio', 'Returned'];
+    const P = vm.P, tab = vm.tab;
+    const head = h('div', { class: 'page-h' },
+      h('div', {}, h('h2', {}, P.title), h('div', { class: 'muted small', style: { marginTop: '4px' } }, `Podcast planner · ${vm.summary}`)),
+      h('span', { class: 'grow' }),
+      h('a', { class: 'btn', href: `#/p/${P.id}/live` }, icon('play', 15), 'Live desk'),
+      h('a', { class: 'btn', href: `#/p/${P.id}/script` }, icon('pen', 15), vm.isVideo ? 'Open script' : 'Open audio script'));
+    const tabs = h('div', { class: 'tabs rep-tabs', style: { marginBottom: '16px' } },
+      vm.tabs.map(([k, l]) => h('button', { class: k === tab ? 'on' : '', onclick: () => vm.setTab(k) }, l)));
+    const body = { rundown: rundownTab, video: videoTab, guests: guestsTab, sponsors: sponsorsTab, gear: gearTab, notes: notesTab }[tab]();
+    morph(wrap, [head, showBar(), tabs, h('div', { class: 'pod-content', 'data-key': 'tab-' + tab }, body)]);
+  }
 
-    const rows = pd.gear.filter(g => (!st || g.status === st) && (!q || JSON.stringify(Object.values(g)).toLowerCase().includes(q)));
-    const total = sum(pd.gear, cost);
-    const done = pd.gear.filter(g => ['Picked up', 'In Studio', 'On set', 'Returned'].includes(g.status)).length;
+  /* ---------- the show: format, medium, target length ---------- */
+  function showBar() {
+    const fmt = vm.formats.find(x => x[0] === vm.format);
+    return h('div', { class: 'card pod-show', 'data-key': 'show', style: { padding: '10px 16px', marginBottom: '14px' } },
+      h('div', { class: 'row wrap', style: { gap: '10px 14px', alignItems: 'center' } },
+        h('span', { class: 'small muted', style: { fontWeight: 600 } }, 'Show format'),
+        h('div', { class: 'seg sm' }, vm.formats.map(([k, l, d]) => h('button', { class: vm.format === k ? 'on' : '', title: d, onclick: () => vm.setFormat(k) }, l))),
+        h('span', { class: 'small muted', style: { fontWeight: 600, marginLeft: '6px' } }, 'Recorded as'),
+        h('div', { class: 'seg sm' }, vm.media.map(([k, l]) => h('button', { class: vm.medium === k ? 'on' : '', onclick: () => vm.setMedium(k) }, icon(k === 'video' ? 'camera' : 'cue', 13), l))),
+        vm.isFree ? h('span', { class: 'row', style: { gap: '6px', alignItems: 'center', marginLeft: '6px' } },
+          h('span', { class: 'small muted', style: { fontWeight: 600 } }, 'Target length'),
+          h('input', { class: 'inp sm', type: 'number', min: 0, step: 5, style: { width: '72px' }, value: vm.target, onchange: e => vm.setTarget(e.target.value) }),
+          h('span', { class: 'small muted' }, 'min')) : null),
+      h('div', { class: 'small muted', style: { marginTop: '6px' } }, fmt ? fmt[2] : '', vm.isVideo ? ' Filmed: plan cameras, the set and on-screen graphics in “Cameras & set”; the live desk adds camera switching, clip and sync markers.' : ''));
+  }
 
-    const body = h('div');
-    cats.forEach(c => {
-      const ls = rows.filter(g => g.cat === c);
-      if (!ls.length) return;
-      body.append(
-        h('h3', { style: { fontSize: '14px', margin: '18px 0 6px', textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--muted)' } }, `${c} · ${ls.length}`),
-        h('div', { class: 'rep-wrap' },
-          h('table', { class: 'tbl wide gear-t' },
-            h('thead', {}, h('tr', {}, ['Item', 'Qty', 'Source', 'Rate / day', 'Days', 'Total', 'Pick-up', 'Return', 'Status', ''].map(x => h('th', {}, x)))),
-            h('tbody', {}, ls.map(g => {
-              const tot = h('td', { style: { whiteSpace: 'nowrap', fontWeight: 600 } }, money(cost(g)));
-              const f = (k, o = {}) => h('input', {
-                class: 'cell',
-                type: o.type,
-                list: o.list,
-                min: o.type === 'number' ? 0 : undefined,
-                value: g[k] || '',
-                placeholder: o.ph || '',
-                style: o.w ? { width: o.w } : {},
-                oninput: e => { g[k] = e.target.value; tot.textContent = money(cost(g)); Store.touch(); }
-              });
-              return h('tr', {},
-                h('td', {}, f('name', { ph: 'Item name / model' })),
-                h('td', {}, f('qty', { type: 'number', w: '58px' })),
-                h('td', {}, f('source', { list: 'dl-podgearsrc', ph: 'Owned / rental house' })),
-                h('td', {}, f('rate', { type: 'number', w: '84px' })),
-                h('td', {}, f('days', { type: 'number', w: '58px', ph: String(P.days.length || 1) })),
-                tot,
-                h('td', {}, f('pickup', { type: 'date' })),
-                h('td', {}, f('ret', { type: 'date' })),
-                h('td', {}, h('select', {
-                  class: 'cell',
-                  onchange: e => { g.status = e.target.value; Store.touch(); draw(); }
-                }, statuses.map(s => h('option', { selected: s === g.status }, s)))),
-                h('td', { style: { width: '70px' } },
-                  ibtn('copy', 'Duplicate', () => { pd.gear.splice(pd.gear.indexOf(g) + 1, 0, { ...g, id: uid() }); Store.touch(); draw(); }),
-                  ibtn('trash', 'Delete', () => { pd.gear = pd.gear.filter(x => x !== g); Store.touch(); draw(); }, 'danger')));
-            })))));
-    });
+  /* ---------- the recording clock (same session as the live desk) ---------- */
+  const paceText = () => { if (!rec.hasRundown) return ['Add a segment to start', 'muted']; const st = rec.state; return [`${st.free ? 'Time' : 'Pacing'}: ${st.pace[0]}`, st.pace[1]]; };
+  function recStrip() {
+    const live = rec.clock.running, begun = rec.clock.elapsedSec > 0, [pt, tone] = paceText();
+    return h('div', { class: 'card pod-timer-bar', 'data-key': 'clock', style: { padding: '14px 18px', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', background: 'var(--surface2)', borderColor: live ? 'var(--accent)' : 'var(--border)' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+        h('span', { class: 'pill', style: { background: live ? 'var(--ok)' : 'var(--muted)', color: '#fff', fontWeight: 700 } }, live ? 'LIVE RECORDING' : begun ? 'PAUSED' : 'CLOCK READY'),
+        h('b', { id: 'podLiveClock', style: { fontFamily: 'var(--mono)', fontSize: '26px', letterSpacing: '0.04em' } }, f(rec.clock.elapsedSec))),
+      h('div', { id: 'podAheadBehind', class: 'small', style: { fontWeight: 600, color: TONE[tone] } }, pt),
+      rec.isVideo && rec.curCam ? h('span', { class: 'chip' }, icon('camera', 12), rec.curCam) : null,
+      h('span', { class: 'grow' }),
+      h('div', { class: 'row', style: { gap: '8px' } },
+        h('button', { class: 'btn primary sm', disabled: !rec.hasRundown, onclick: () => rec.record() }, icon(live ? 'pause' : 'play', 14), live ? 'Pause' : begun ? 'Resume' : 'Start recording'),
+        h('button', { class: 'btn sm', title: 'Reset the clock to 00:00 for a fresh take', onclick: async () => { if (await confirmBox('Reset the recording clock to 00:00 and clear this session’s markers? Problems and the activity log are kept.', 'New session', 'Start a new session?')) rec.newSession(); } }, icon('rotate', 14), 'New session'),
+        h('button', { class: 'btn sm', disabled: !rec.hasRundown, title: 'Log a time marker for the editor', onclick: async () => { const l = await promptBox('Editor marker', 'What happened at this moment? (retake intro, audio drop…)', ''); if (l) { rec.mark(l, 'custom'); toast(`Marker logged at ${f(rec.clock.elapsedSec)}`); } } }, icon('pin', 14), 'Drop marker'),
+        h('a', { class: 'btn sm', href: `#/p/${vm.P.id}/live` }, icon('right', 14), 'Live desk')));
+  }
 
-    wrap.replaceChildren(
-      // Summary & Metrics Bar
+  /* ---------- rundown / topics ---------- */
+  function templateMenu(anchor) {
+    menu(anchor, vm.templates.map(t => ({ label: t.label, desc: t.desc + (t.format === 'freeflow' ? ' (Freeflow)' : '') + (t.medium === 'video' ? ' (Filmed)' : ''),
+      onClick: async () => {
+        if (vm.rundown.length && !(await confirmBox(`Replace the current rundown with “${t.label}”?`, 'Replace', 'Apply template?'))) return;
+        vm.useTemplate(t.key); toast(`Applied ${t.label}`);
+      } })));
+  }
+  function rundownTab() {
+    const free = vm.isFree, n = vm.rundown.length, word = free ? 'topic' : 'segment';
+    const toolbar = h('div', { class: 'toolbar', style: { marginBottom: '14px' } },
+      h('button', { class: 'btn primary', onclick: () => vm.addSegment() }, icon('plus', 15), `Add ${word}`),
+      h('button', { class: 'btn', onclick: e => templateMenu(e.currentTarget) }, icon('grid', 15), 'Apply template…'),
+      h('span', { class: 'small muted', style: { marginLeft: '8px' } }, free ? `Topics add up to ~${Math.round(vm.plannedMin)} min · aiming for ${vm.target || Math.round(vm.plannedMin)} min` : `Total Planned Run: ~${Math.round(vm.plannedMin)} minutes (${f(vm.plannedMin * 60)})`),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn sm ghost', onclick: () => download(slugOf(vm.P.title) + '-rundown.csv', toCSV(vm.rundownCsv), 'text/csv') }, icon('download', 14), 'Export CSV'),
+      h('button', { class: 'btn sm ghost', onclick: () => copy(vm.rundownText, free ? 'Topics copied' : 'Rundown copied to clipboard') }, icon('copy', 14), 'Copy summary'));
+    if (!n) return [recStrip(), toolbar, h('div', { class: 'empty' },
+      h('h3', {}, free ? 'No topics yet' : 'No segments planned yet'),
+      h('p', {}, free ? 'List what you want to talk about and mark the must-covers. On the day, follow the conversation — the live desk shows what’s left and how much time you have.' : 'Add your first segment or pick a ready-made podcast template to build your episode flow.'),
+      h('div', { class: 'row', style: { gap: '8px', justifyContent: 'center' } },
+        h('button', { class: 'btn primary', onclick: () => vm.useTemplate(free ? 'conversation' : vm.isVideo ? 'videocast' : 'interview') }, free ? 'Load freeflow conversation template (60m)' : vm.isVideo ? 'Load filmed interview template (45m)' : 'Load standard interview template (45m)'),
+        h('button', { class: 'btn', onclick: e => templateMenu(e.currentTarget) }, 'Other templates…')))];
+    const notes = [];
+    if (vm.format === 'scripted') notes.push(h('div', { class: 'card', style: { padding: '10px 16px', marginBottom: '12px', borderLeft: '4px solid var(--accent)' } },
+      h('span', { class: 'small' }, 'Scripted show: the words live in the script. Use this rundown as the outline — it gives the live desk its segments and the show notes their chapters. '),
+      h('a', { class: 'btn sm', href: `#/p/${vm.P.id}/script` }, 'Open the script')));
+    if (free && vm.overBooked) notes.push(h('div', { class: 'card', style: { padding: '10px 16px', marginBottom: '12px', borderLeft: '4px solid var(--warn)' } },
+      h('span', { class: 'small' }, `The must-cover topics alone run ${Math.round(vm.overBooked)} min over the ${vm.target} min target — move some to “Nice to have” or raise the target.`)));
+    let list;
+    if (free) list = vm.groups.filter(g => g.items.length || g.key === 'Must').map(g => h('div', { 'data-key': 'grp-' + g.key, style: { marginBottom: '16px' } },
+      h('h3', { style: { fontSize: '13px', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '.08em', color: M.PRIORITY_TONE[g.key] || 'var(--muted)' } },
+        `${g.label} · ${g.items.length}${g.items.length ? ` · ~${Math.round(g.items.reduce((a, s) => a + M.dur(s.dur), 0))} min` : ''}`),
+      g.items.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, g.items.map(s => segCard(s, vm.rundown.indexOf(s), null)))
+        : h('p', { class: 'small muted' }, 'Mark the topics you can’t finish without as “Must cover”.')));
+    else list = h('div', { class: 'pod-seg-list', style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, vm.rows.map(r => segCard(r.seg, r.idx, r.start, r.last)));
+    return [recStrip(), toolbar, ...notes, list];
+  }
+  function segCard(seg, idx, start, last) {
+    const free = vm.isFree, vid = vm.isVideo, isCut = seg.status === 'Cut', set = k => e => vm.setSeg(seg.id, k, e.target.value);
+    const top = h('div', { class: 'row', style: { gap: '12px', alignItems: 'center', marginBottom: '8px' } },
+      free ? h('select', { class: 'inp sm', title: 'How much this topic matters', style: { width: 'auto', fontWeight: 700, color: M.PRIORITY_TONE[seg.priority || 'Nice'] }, onchange: set('priority') }, opts(M.PRIORITY, seg.priority || 'Nice', p => M.PRIORITY_LABEL[p]))
+        : h('span', { class: 'pill', style: { fontFamily: 'var(--mono)', fontSize: '13px', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 700 } }, f(start * 60)),
+      free ? null : h('span', { class: 'small muted', style: { fontWeight: 600 } }, `#${idx + 1}`),
+      h('input', { class: 'inp', style: { fontWeight: 700, fontSize: '15px', flex: 1 }, value: seg.title, placeholder: free ? 'Topic…' : 'Segment title / topic…', oninput: set('title') }),
+      seg.parked ? h('span', { class: 'chip', title: 'Parked during a recording' }, '↪ parked') : null,
+      h('div', { class: 'row', style: { gap: '4px', alignItems: 'center' } },
+        h('input', { class: 'inp', type: 'number', step: '0.5', min: '0.5', style: { width: '65px', textAlign: 'right', fontWeight: 600 }, value: seg.dur, title: free ? 'Rough length in minutes' : 'Target duration in minutes', onchange: set('dur') }),
+        h('span', { class: 'small muted' }, free ? 'min est.' : 'min')),
+      h('select', { class: 'inp sm', style: { width: 'auto', fontWeight: 600 }, onchange: set('status') }, opts(M.STATUS, seg.status)),
+      free ? null : h('button', { class: 'icon-btn', title: 'Move up', disabled: idx === 0, onclick: () => vm.moveSeg(idx, -1) }, icon('up', 14)),
+      free ? null : h('button', { class: 'icon-btn', title: 'Move down', disabled: !!last, onclick: () => vm.moveSeg(idx, 1) }, icon('down', 14)),
+      h('button', { class: 'icon-btn danger', title: `Delete ${free ? 'topic' : 'segment'}`, onclick: async () => { if (await confirmBox(`Delete “${seg.title}”?`)) vm.removeSeg(seg.id); } }, icon('trash', 14)));
+    const side = h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' } },
+      h('div', {}, lbl('Audio cue / Stinger / Drop'), h('input', { class: 'inp sm', placeholder: 'e.g. Intro theme, sound bite, stinger', value: seg.cues || '', oninput: set('cues') })),
+      vid ? h('div', {}, lbl('Camera / shot'), h('input', { class: 'inp sm', placeholder: 'e.g. Wide → guest single', value: seg.cam || '', oninput: set('cam') })) : null,
+      h('div', {}, lbl('Attach Guest or Sponsor'), h('div', { class: 'row', style: { gap: '6px' } },
+        h('select', { class: 'inp sm', style: { flex: 1 }, onchange: set('guestId') }, h('option', { value: '' }, '(No guest linked)'), vm.guests.map(g => h('option', { value: g.id, selected: g.id === seg.guestId }, 'Guest: ' + g.name))),
+        h('select', { class: 'inp sm', style: { flex: 1 }, onchange: set('sponsorId') }, h('option', { value: '' }, '(No sponsor linked)'), vm.sponsors.map(sp => h('option', { value: sp.id, selected: sp.id === seg.sponsorId }, 'Ad: ' + sp.name))))));
+    const main = h('div', { style: { flex: 2, display: 'flex', flexDirection: 'column', gap: '8px' } },
+      h('div', {}, lbl(free ? 'Starter questions & angles (optional — it’s a conversation)' : 'Talking points & questions (one per line)'),
+        h('textarea', { class: 'inp', rows: Math.max(2, (seg.bullets || '').split('\n').length), placeholder: free ? 'A question to get it going\nA story you want to tell' : '• Key points to hit\n• Questions to ask\n• Anecdotes or stats', value: seg.bullets || '', oninput: set('bullets') })),
+      vid ? h('div', {}, lbl('On-screen graphics (one per line)'), h('textarea', { class: 'inp', rows: Math.max(1, (seg.gfx || '').split('\n').length), placeholder: 'Lower third: guest name & title\nB-roll / image / product shot', value: seg.gfx || '', oninput: set('gfx') })) : null);
+    return h('div', { class: 'card pod-seg-card', 'data-key': seg.id, style: { padding: '12px 16px', borderColor: seg.status === 'Recording' ? 'var(--accent)' : 'var(--border)', opacity: isCut ? '0.6' : '1', borderLeft: `4px solid ${M.TONE[seg.status] || 'var(--border)'}` } },
+      top, h('div', { class: 'row', style: { gap: '14px', alignItems: 'flex-start' } }, main, side));
+  }
+
+  /* ---------- cameras & set (filmed shows) ---------- */
+  function videoTab() {
+    const v = vm.video, cams = vm.cameras, sv = k => e => vm.setVideo(k, e.target.type === 'checkbox' ? e.target.checked : e.target.value);
+    const frame = h('div', { class: 'card', style: { padding: '16px 20px' } },
+      h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, 'Frame & recording'),
+      h('div', { class: 'row wrap', style: { gap: '12px', alignItems: 'flex-end' } },
+        field('Main aspect ratio', h('select', { class: 'inp', onchange: sv('aspect') }, opts(M.ASPECTS, v.aspect)), { flex: '0 0 140px', minWidth: '120px' }),
+        field('Resolution & frame rate', h('input', { class: 'inp', value: v.res || '', placeholder: '4K · 25p', oninput: sv('res') }), { flex: '0 0 180px', minWidth: '150px' }),
+        field('Social clips', h('select', { class: 'inp', onchange: sv('clips') }, h('option', { value: '' }, 'No clips'), opts(M.ASPECTS, v.clips, a => `${a} clips`)), { flex: '0 0 150px', minWidth: '130px' }),
+        h('label', { class: 'row small', style: { gap: '6px', fontWeight: 600, cursor: 'pointer', paddingBottom: '8px' } }, h('input', { type: 'checkbox', checked: !!v.iso, onchange: sv('iso') }), 'ISO-record every camera (separate files for the edit)')));
+    const camCard = h('div', { class: 'card', style: { padding: '16px 20px' } },
+      h('div', { class: 'row', style: { marginBottom: '10px', gap: '8px' } },
+        h('h3', { style: { margin: 0, fontSize: '16px' } }, `Cameras · ${cams.length}`), h('span', { class: 'grow' }),
+        h('button', { class: 'btn sm primary', onclick: () => vm.addCamera() }, icon('plus', 13), 'Add camera'),
+        h('button', { class: 'btn sm ghost', onclick: () => copy(vm.cameraText, 'Camera plan copied') }, icon('copy', 13), 'Copy camera plan')),
+      cams.length ? h('div', { class: 'rep-wrap' }, h('table', { class: 'tbl wide' },
+        h('thead', {}, h('tr', {}, ['Camera', 'Shot', 'Operator', 'Lens', 'Card (min)', 'Notes', ''].map(x => h('th', {}, x)))),
+        h('tbody', {}, cams.map(c => { const sc = k => e => vm.setCamera(c.id, k, e.target.value);
+          return h('tr', { 'data-key': c.id },
+            h('td', {}, h('input', { class: 'cell', style: { width: '80px', fontWeight: 700 }, value: c.name, oninput: sc('name') })),
+            h('td', {}, h('select', { class: 'cell', onchange: sc('shot') }, opts(M.SHOTS.includes(c.shot) ? M.SHOTS : [c.shot, ...M.SHOTS], c.shot))),
+            h('td', {}, h('input', { class: 'cell', value: c.who || '', placeholder: 'Locked off / name', oninput: sc('who') })),
+            h('td', {}, h('input', { class: 'cell', value: c.lens || '', placeholder: '24-70 @ 50mm', oninput: sc('lens') })),
+            h('td', {}, h('input', { class: 'cell', type: 'number', min: 0, style: { width: '70px' }, value: c.cardMins || '', placeholder: '—', title: 'Minutes this camera’s card / battery lasts — the live desk warns before it runs out', oninput: sc('cardMins') })),
+            h('td', {}, h('input', { class: 'cell', value: c.notes || '', placeholder: 'Framing, height, notes', oninput: sc('notes') })),
+            h('td', {}, ibtn('trash', 'Remove camera', async () => { if (await confirmBox(`Remove ${c.name}?`)) vm.removeCamera(c.id); }, 'danger'))); }))))
+        : h('p', { class: 'small muted' }, 'No cameras yet. A typical two-person show uses three: a wide and a single on each person.'));
+    const ta = (k, label, ph, rows = 3) => field(label, h('textarea', { class: 'inp', rows, value: v[k] || '', placeholder: ph, oninput: sv(k) }), { minWidth: '260px' });
+    const look = h('div', { class: 'card', style: { padding: '16px 20px' } },
+      h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, 'Set, lighting & on camera'),
+      h('div', { class: 'row wrap', style: { gap: '12px' } },
+        ta('set', 'Set & background', 'Bookshelf left of frame, neon sign behind host, plants, no visible clock…'),
+        ta('lighting', 'Lighting', 'Key soft box camera-left at 45°, fill at 30%, warm practicals, hair light…')),
+      h('div', { class: 'row wrap', style: { gap: '12px', marginTop: '12px' } },
+        ta('wardrobe', 'Wardrobe & on-camera notes (hosts)', 'Solid colours, no thin stripes or logos; mics visible / hidden…', 2),
+        field('Thumbnail idea', h('input', { class: 'inp', value: v.thumbnail || '', placeholder: 'Guest mid-laugh, big text: “WE WERE WRONG”', oninput: sv('thumbnail') }), { minWidth: '260px' })));
+    const gfx = vm.graphics;
+    const gCard = h('div', { class: 'card', style: { padding: '16px 20px' } },
+      h('h3', { style: { margin: '0 0 10px', fontSize: '16px' } }, 'On-screen graphics'),
+      gfx.length ? h('div', { class: 'ld-list' }, gfx.map(g => h('div', { style: { marginBottom: '8px' } }, h('b', { class: 'small' }, g.seg.title), ...g.items.map(x => h('div', { class: 'small' }, '• ' + x)))))
+        : h('p', { class: 'small muted' }, 'Add lower thirds, titles and b-roll to each segment in the rundown (“On-screen graphics”).'));
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } }, frame, camCard, look, gCard);
+  }
+
+  /* ---------- guests ---------- */
+  function guestsTab() {
+    const gs = vm.guests, vid = vm.isVideo, free = vm.isFree;
+    const bar = h('div', { class: 'toolbar', style: { marginBottom: '16px' } },
+      h('button', { class: 'btn primary', onclick: () => vm.addGuest() }, icon('plus', 15), 'Add guest'),
+      h('span', { class: 'small muted' }, `${gs.length} guest profile${gs.length === 1 ? '' : 's'} for this episode`), h('span', { class: 'grow' }),
+      h('button', { class: 'btn sm ghost', onclick: () => copy(vm.guestsDigest, 'Guest interview notes copied') }, icon('copy', 14), 'Copy all questions'));
+    if (!gs.length) return [bar, h('div', { class: 'empty' }, h('h3', {}, 'No interview guests added yet'),
+      h('p', {}, 'Plan guest bios, talking points, questions to ask, sensitive topics to avoid, and remote call links.'),
+      h('button', { class: 'btn primary', onclick: () => vm.addGuest() }, 'Add first guest'))];
+    return [bar, h('div', { class: 'pod-guest-grid', style: { display: 'flex', flexDirection: 'column', gap: '16px' } }, gs.map(g => {
+      const set = k => e => vm.setGuest(g.id, k, e.target.value), ta = (k, rows, ph, style = {}) => h('textarea', { class: 'inp', rows, value: g[k] || '', placeholder: ph, style, oninput: set(k) });
+      return h('div', { class: 'card', 'data-key': g.id, style: { padding: '16px 20px' } },
+        h('div', { class: 'row', style: { gap: '12px', alignItems: 'center', marginBottom: '14px' } },
+          h('span', { class: 'ico', style: { color: 'var(--accent)' } }, icon('user', 20)),
+          h('input', { class: 'inp', style: { fontWeight: 700, fontSize: '17px', flex: 1 }, value: g.name, placeholder: 'Guest name…', oninput: set('name') }),
+          h('input', { class: 'inp', style: { width: '100px' }, value: g.pronouns || '', placeholder: 'they/them', title: 'Pronouns', oninput: set('pronouns') }),
+          h('select', { class: 'inp sm', style: { width: 'auto', fontWeight: 600 }, title: `Guest ${vid ? 'appearance (audio & video)' : 'appearance'} release status`, onchange: set('release') }, opts(M.RELEASE, g.release, r => `Release: ${r}`)),
+          h('button', { class: 'icon-btn danger', title: 'Delete guest', onclick: async () => { if (await confirmBox(`Remove guest ${g.name}?`)) vm.removeGuest(g.id); } }, icon('trash', 14))),
+        h('div', { class: 'row wrap', style: { gap: '12px', marginBottom: '12px' } },
+          field('Title / Credentials / Organization', h('input', { class: 'inp', value: g.title || '', placeholder: 'e.g. Lead Astronomer, Author of Signal', oninput: set('title') }), { flex: 2, minWidth: '220px' }),
+          field(`Remote Recording Link (${vid ? 'Riverside / StreamYard / Zoom' : 'Riverside / Squadcast / Zoom'})`, h('div', { class: 'row', style: { gap: '6px' } },
+            h('input', { class: 'inp', value: g.link || '', placeholder: 'https://riverside.fm/studio/...', oninput: set('link') }),
+            g.link ? h('a', { class: 'btn sm', href: /^https?:/.test(g.link) ? g.link : 'https://' + g.link, target: '_blank', rel: 'noreferrer' }, 'Open') : null), { flex: 2, minWidth: '220px' }),
+          field('Time Zone / Location', h('input', { class: 'inp', value: g.timeZone || '', placeholder: 'EST (UTC-5)', oninput: set('timeZone') }), { minWidth: '130px' })),
+        h('div', { class: 'row wrap', style: { gap: '12px', marginBottom: '12px' } },
+          field('Short Bio & Context', ta('bio', 2, 'Brief background to read on air during introduction…'), { flex: 2, minWidth: '280px' }),
+          field('Guest Plugs & Socials (Website, X, Book)', ta('plugs', 2, '@handle, website.com, new book title'))),
+        vid ? h('div', { class: 'row wrap', style: { gap: '12px', marginBottom: '12px' } },
+          field('On camera — wardrobe, framing, remote camera & lighting', ta('onCamera', 2, 'Solid colours, no stripes · laptop at eye level, window in front · send a webcam / lighting checklist…'), { minWidth: '280px' })) : null,
+        h('div', { class: 'row wrap', style: { gap: '14px', alignItems: 'flex-start' } },
+          field(free ? 'Conversation starters & angles' : 'Core Questions & Discussion Angles', ta('questions', 5, '1. First question…\n2. Follow-up angle…\n3. Practical advice…'), { flex: 2, minWidth: '300px' }),
+          h('div', { style: { flex: 1, minWidth: '240px' } }, h('label', { class: 'lbl small', style: { color: 'var(--warn)', fontWeight: 600 } }, '⚠️ Sensitive / No-Go Topics (Do NOT ask)'),
+            ta('nogo', 5, 'Topics the guest requested to avoid, legal non-disclosures, private topics…', { borderColor: g.nogo ? 'var(--warn)' : 'var(--border)', background: g.nogo ? 'color-mix(in srgb, var(--warn) 6%, transparent)' : 'transparent' }))));
+    }))];
+  }
+
+  /* ---------- sponsors ---------- */
+  function sponsorsTab() {
+    const ss = vm.sponsors, vid = vm.isVideo;
+    const bar = h('div', { class: 'toolbar', style: { marginBottom: '16px' } },
+      h('button', { class: 'btn primary', onclick: () => vm.addSponsor() }, icon('plus', 15), 'Add sponsor read'),
+      h('span', { class: 'small muted' }, `${ss.length} ad read campaign${ss.length === 1 ? '' : 's'}`), h('span', { class: 'grow' }),
+      h('button', { class: 'btn sm ghost', onclick: () => copy(vm.sponsorsText, 'All sponsor reads copied') }, icon('copy', 14), 'Copy all ad copy'));
+    if (!ss.length) return [bar, h('div', { class: 'empty' }, h('h3', {}, 'No sponsor reads configured'),
+      h('p', {}, 'Track sponsor campaigns, promo codes, mandatory talking points, and full host-read ad copy.'),
+      h('button', { class: 'btn primary', onclick: () => vm.addSponsor() }, 'Add first sponsor read'))];
+    return [bar, h('div', { class: 'pod-sponsor-grid', style: { display: 'flex', flexDirection: 'column', gap: '16px' } }, ss.map(sp => {
+      const set = k => e => vm.setSponsor(sp.id, k, e.target.type === 'checkbox' ? e.target.checked : e.target.value);
+      return h('div', { class: 'card', 'data-key': sp.id, style: { padding: '16px 20px', borderLeft: sp.recorded ? '4px solid var(--ok)' : '4px solid var(--accent)' } },
+        h('div', { class: 'row', style: { gap: '12px', alignItems: 'center', marginBottom: '12px' } },
+          h('span', { class: 'ico', style: { color: 'var(--accent)' } }, icon('dollar', 18)),
+          h('input', { class: 'inp', style: { fontWeight: 700, fontSize: '16px', flex: 2 }, value: sp.name, placeholder: 'Sponsor / Brand name…', oninput: set('name') }),
+          h('select', { class: 'inp sm', style: { flex: 1 }, onchange: set('slot') }, opts(M.SLOTS, sp.slot)),
+          h('select', { class: 'inp sm', style: { width: '80px' }, onchange: set('duration') }, opts(M.LENGTHS.includes(sp.duration) ? M.LENGTHS : [sp.duration, ...M.LENGTHS], sp.duration)),
+          h('label', { class: 'row small', style: { gap: '6px', fontWeight: 600, cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: !!sp.recorded, onchange: set('recorded') }), 'Recorded'),
+          h('button', { class: 'icon-btn danger', title: 'Delete sponsor', onclick: async () => { if (await confirmBox(`Remove sponsor read for ${sp.name}?`)) vm.removeSponsor(sp.id); } }, icon('trash', 14))),
+        h('div', { class: 'row wrap', style: { gap: '12px', marginBottom: '12px' } },
+          field('Promo Code', h('input', { class: 'inp', style: { fontFamily: 'var(--mono)', fontWeight: 700 }, value: sp.code || '', placeholder: 'e.g. PODCAST20', oninput: set('code') }), { minWidth: '180px' }),
+          field('Vanity URL / Landing Page', h('input', { class: 'inp', value: sp.url || '', placeholder: 'e.g. brand.com/podcast', oninput: set('url') }), { flex: 2, minWidth: '240px' }),
+          vid ? field('On screen during the read', h('input', { class: 'inp', value: sp.onScreen || '', placeholder: 'Logo bug + promo code, product b-roll', oninput: set('onScreen') }), { flex: 2, minWidth: '240px' }) : null),
+        h('div', { class: 'row wrap', style: { gap: '14px', alignItems: 'flex-start' } },
+          h('div', { style: { flex: 2, minWidth: '320px' } },
+            h('div', { class: 'row', style: { marginBottom: '4px' } }, lbl('Host-Read Ad Copy'), h('span', { class: 'grow' }),
+              h('button', { class: 'btn sm ghost', onclick: () => copy(sp.copy || '', 'Ad copy copied') }, icon('copy', 13), 'Copy copy')),
+            h('textarea', { class: 'inp', rows: 5, style: { fontStyle: 'italic', lineHeight: '1.45' }, value: sp.copy || '', placeholder: 'Scripted host read text to read on mic…', oninput: set('copy') })),
+          field('Mandatory Points & Claims', h('textarea', { class: 'inp', rows: 5, value: sp.points || '', placeholder: '• Must mention offer expires Dec 31\n• Mention free shipping…', oninput: set('points') }), { minWidth: '240px' })));
+    }))];
+  }
+
+  /* ---------- gear ---------- */
+  let gearTimer = null;
+  function gearTab() {
+    const st = vm.gearStats, gf = vm.gearFilter, cats = vm.gearCats, statuses = vm.gearStatuses, groups = vm.gearGroups, nd = vm.nDays;
+    const kit = kind => { const n = vm.addKit(kind); toast(`Added ${n} item${n === 1 ? '' : 's'} — the ${kind === 'video' ? 'camera & lighting' : 'studio audio'} starter kit`); };
+    const body = groups.map(g => h('div', { 'data-key': 'cat-' + g.cat },
+      h('h3', { style: { fontSize: '14px', margin: '18px 0 6px', textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--muted)' } }, `${g.cat} · ${g.items.length}`),
+      h('div', { class: 'rep-wrap' }, h('table', { class: 'tbl wide gear-t' },
+        h('thead', {}, h('tr', {}, ['Item', 'Qty', 'Source', 'Rate / day', 'Days', 'Total', 'Pick-up', 'Return', 'Status', ''].map(x => h('th', {}, x)))),
+        h('tbody', {}, g.items.map(it => {
+          const tot = h('td', { class: 'gear-tot', style: { whiteSpace: 'nowrap', fontWeight: 600 } }, money(vm.gearCost(it)));
+          const c = (k, o = {}) => h('input', { class: 'cell', type: o.type, list: o.list, min: o.type === 'number' ? 0 : undefined, value: it[k] || '', placeholder: o.ph || '', style: o.w ? { width: o.w } : {},
+            oninput: e => { vm.setGear(it.id, k, e.target.value); const t = e.target.closest('tr').querySelector('.gear-tot'); if (t) t.textContent = money(vm.gearCost(it)); } });
+          return h('tr', { 'data-key': it.id },
+            h('td', {}, c('name', { ph: 'Item name / model' })), h('td', {}, c('qty', { type: 'number', w: '58px' })),
+            h('td', {}, c('source', { list: 'dl-podgearsrc', ph: 'Owned / rental house' })), h('td', {}, c('rate', { type: 'number', w: '84px' })),
+            h('td', {}, c('days', { type: 'number', w: '58px', ph: String(nd || 1) })), tot,
+            h('td', {}, c('pickup', { type: 'date' })), h('td', {}, c('ret', { type: 'date' })),
+            h('td', {}, h('select', { class: 'cell', onchange: e => vm.setGear(it.id, 'status', e.target.value) }, opts(statuses.includes(it.status) ? statuses : [it.status, ...statuses], it.status))),
+            h('td', { style: { width: '70px' } }, ibtn('copy', 'Duplicate', () => vm.duplicateGear(it.id)), ibtn('trash', 'Delete', () => vm.removeGear(it.id), 'danger')));
+        }))))));
+    return [h('datalist', { id: 'dl-podgearsrc' }, vm.gearSources.map(x => h('option', { value: x }))),
       h('div', { class: 'sum', style: { marginBottom: '14px' } },
-        h('div', {}, h('span', {}, 'Audio items'), h('b', {}, String(pd.gear.length))),
-        h('div', {}, h('span', {}, 'Studio ready'), h('b', {}, `${done}/${pd.gear.length}`)),
-        h('div', {}, h('span', {}, 'Gear & rental cost'), h('b', { style: { color: 'var(--accent)' } }, money(total)))),
-
-      // Toolbar
+        h('div', {}, h('span', {}, vm.isVideo ? 'Audio & video items' : 'Audio items'), h('b', {}, String(st.count))),
+        h('div', {}, h('span', {}, 'Studio ready'), h('b', {}, `${st.ready}/${st.count}`)),
+        h('div', {}, h('span', {}, 'Gear & rental cost'), h('b', { style: { color: 'var(--accent)' } }, money(st.total)))),
       h('div', { class: 'toolbar', style: { marginBottom: '12px', flexWrap: 'wrap', gap: '8px' } },
-        h('button', {
-          class: 'btn primary',
-          onclick: e => menu(e.currentTarget, cats.map(c => ({
-            label: c,
-            onClick: () => {
-              pd.gear.push({ id: uid(), cat: c, name: '', qty: 1, source: 'Owned', rate: '', days: '', pickup: '', ret: '', status: 'Needed', notes: '' });
-              Store.touch();
-              draw();
-            }
-          })))
-        }, icon('plus', 15), 'Add gear item'),
-        h('button', {
-          class: 'btn',
-          title: 'Load standard studio broadcast kit',
-          onclick: () => {
-            const starter = typeof starterPodcastGear === 'function' ? starterPodcastGear() : [];
-            starter.forEach(g => pd.gear.push(g));
-            Store.touch();
-            toast('Loaded studio podcast starter kit');
-            draw();
-          }
-        }, icon('wand', 15), 'Add audio starter kit'),
-        h('button', {
-          class: 'btn',
-          title: 'Create budget lines from items with a day rate',
-          onclick: toBudget
-        }, icon('dollar', 15), 'Send to budget'),
-        h('button', {
-          class: 'btn',
-          onclick: e => menu(e.currentTarget, [
-            {
-              label: 'Pack list (print)',
-              icon: 'print',
-              onClick: () => printTable('Podcast Gear Pack List', ['☐', 'Category', 'Item', 'Qty', 'Source', 'Status'], cats.flatMap(c => {
-                const ls = pd.gear.filter(g => g.cat === c);
-                return ls.length ? [{ grp: c }, ...ls.map(g => ['☐', g.cat, g.name, g.qty, g.source, g.status])] : [];
-              }), { landscape: false })
-            },
-            {
-              label: 'Rental orders (print)',
-              icon: 'print',
-              onClick: () => {
-                const by = new Map();
-                pd.gear.filter(g => g.source && g.source !== 'Owned').forEach(g => {
-                  if (!by.has(g.source)) by.set(g.source, []);
-                  by.get(g.source).push(g);
-                });
-                if (!by.size) return toast('No rental items — set Source to the rental house name.', true);
-                printTable('Podcast Rental Orders', ['Item', 'Qty', 'Days', 'Pick-up', 'Return', 'Total'], [...by].flatMap(([s, ls]) => [
-                  { grp: `${s} — ${money(sum(ls, cost))}` },
-                  ...ls.map(g => [g.name, g.qty, days(g), g.pickup, g.ret, money(cost(g))])
-                ]), { landscape: false });
-              }
-            },
-            {
-              label: 'Export CSV',
-              icon: 'download',
-              onClick: () => download(slug(P.title) + '-gear.csv', toCSV(csvRows()), 'text/csv')
-            }
-          ])
-        }, icon('print', 15), 'Reports'),
+        h('button', { class: 'btn primary', onclick: e => menu(e.currentTarget, cats.map(c => ({ label: c, onClick: () => vm.addGear(c) }))) }, icon('plus', 15), 'Add gear item'),
+        h('button', { class: 'btn', title: 'Load a standard studio broadcast kit', onclick: () => kit('audio') }, icon('wand', 15), 'Add audio starter kit'),
+        vm.isVideo ? h('button', { class: 'btn', title: 'Cameras, lenses, lights, switcher, cards and a slate', onclick: () => kit('video') }, icon('camera', 15), 'Add camera & lighting kit') : null,
+        h('button', { class: 'btn', title: 'Create budget lines from items with a day rate', onclick: () => { const n = vm.toBudget(); toast(n ? `Budget updated with ${n} gear line${n > 1 ? 's' : ''}` : 'Add a day rate to gear items first.', !n); } }, icon('dollar', 15), 'Send to budget'),
+        h('button', { class: 'btn', onclick: e => menu(e.currentTarget, [
+          { label: 'Pack list (print)', icon: 'print', onClick: () => printTable('Podcast Gear Pack List', ['☐', 'Category', 'Item', 'Qty', 'Source', 'Status'], vm.packRows, { landscape: false }) },
+          { label: 'Rental orders (print)', icon: 'print', onClick: () => { const r = vm.rentals; if (!r.length) return toast('No rental items — set Source to the rental house name.', true);
+            printTable('Podcast Rental Orders', ['Item', 'Qty', 'Days', 'Pick-up', 'Return', 'Total'], r.flatMap(x => [{ grp: `${x.source} — ${money(x.total)}` }, ...x.items.map(g => [g.name, g.qty, vm.gearDays(g), g.pickup, g.ret, money(vm.gearCost(g))])]), { landscape: false }); } },
+          { label: 'Export CSV', icon: 'download', onClick: () => download(slugOf(vm.P.title) + '-gear.csv', toCSV(vm.gearCsv), 'text/csv') }]) }, icon('print', 15), 'Reports'),
         h('span', { class: 'grow' }),
-        h('input', {
-          class: 'inp',
-          'data-k': 'podgsearch',
-          value: q,
-          placeholder: 'Search mics & gear…',
-          style: { width: '200px' },
-          oninput: e => {
-            q = e.target.value.toLowerCase();
-            clearTimeout(draw.t);
-            draw.t = setTimeout(() => { draw(); }, 250);
-          }
-        }),
-        h('select', {
-          class: 'inp',
-          style: { width: 'auto' },
-          onchange: e => { st = e.target.value; draw(); }
-        },
-        h('option', { value: '' }, 'Any status'),
-        statuses.map(s => h('option', { selected: s === st }, s)))),
-
-      // Table or Empty state
-      rows.length ? body : h('div', { class: 'empty' },
-        h('h3', {}, pd.gear.length ? 'No items match your filter' : 'No studio gear listed yet'),
-        h('p', {}, 'Track microphones, audio interfaces, boom arms, headphones, and field recorders — with rental costs and printable pack lists.'),
-        h('button', {
-          class: 'btn primary',
-          onclick: () => {
-            const starter = typeof starterPodcastGear === 'function' ? starterPodcastGear() : [];
-            starter.forEach(g => pd.gear.push(g));
-            Store.touch();
-            draw();
-          }
-        }, 'Load standard podcast studio kit'))
-    );
-
-    if (q) {
-      const i = wrap.querySelector('[data-k=podgsearch]');
-      if (i) { i.focus(); i.setSelectionRange(q.length, q.length); }
-    }
+        h('input', { class: 'inp', 'data-k': 'podgsearch', value: gf.q, placeholder: vm.isVideo ? 'Search gear & cameras…' : 'Search mics & gear…', style: { width: '200px' },
+          oninput: e => { const v = e.target.value; clearTimeout(gearTimer); gearTimer = setTimeout(() => vm.setGearFilter({ q: v }), 250); } }),
+        h('select', { class: 'inp', style: { width: 'auto' }, onchange: e => vm.setGearFilter({ status: e.target.value }) }, h('option', { value: '' }, 'Any status'), opts(statuses, gf.status))),
+      groups.length ? h('div', { 'data-key': 'gear-body' }, body) : h('div', { class: 'empty', 'data-key': 'gear-empty' },
+        h('h3', {}, vm.gear.length ? 'No items match your filter' : 'No studio gear listed yet'),
+        h('p', {}, vm.isVideo ? 'Track cameras, lenses, lights, microphones and recorders — with rental costs and printable pack lists.' : 'Track microphones, audio interfaces, boom arms, headphones, and field recorders — with rental costs and printable pack lists.'),
+        vm.gear.length ? null : h('div', { class: 'row', style: { gap: '8px', justifyContent: 'center' } },
+          h('button', { class: 'btn primary', onclick: () => kit('audio') }, 'Load standard podcast studio kit'),
+          vm.isVideo ? h('button', { class: 'btn', onclick: () => kit('video') }, 'Load camera & lighting kit') : null))];
   }
 
-  draw();
-}
+  /* ---------- show notes & chapters ---------- */
+  function notesTab() {
+    const ch = vm.chapters, n = vm.notes, vid = vm.isVideo, clips = vm.clips;
+    const out = h('pre', { id: 'podNotesOutput', class: 'inp', style: { minHeight: '220px', maxHeight: '350px', overflow: 'auto', background: 'var(--surface)', padding: '12px 16px', fontSize: '13px', lineHeight: '1.5', whiteSpace: 'pre-wrap' } }, vm.showNotes);
+    const set = k => e => { vm.setNote(k, e.target.value); const el = $('#podNotesOutput'); if (el) el.textContent = vm.showNotes; };
+    const chCard = h('div', { class: 'card', style: { padding: '16px 20px' } },
+      h('div', { class: 'row', style: { marginBottom: '10px' } },
+        h('h3', { style: { margin: 0, fontSize: '16px' } }, 'Episode Chapters (YouTube / Apple / Spotify Timestamps)'), h('span', { class: 'grow' }),
+        h('span', { class: 'pill', style: { marginRight: '8px' } }, ch.source === 'recorded' ? 'From the recording' : 'From the plan'),
+        h('button', { class: 'btn sm primary', onclick: () => copy(vm.chapterText, 'Chapter timestamps copied') }, icon('copy', 14), 'Copy chapter timestamps')),
+      h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, ch.source === 'recorded'
+        ? 'Taken from when each segment actually started in the recording session. Adjust for edits made in post.'
+        : (vm.isFree ? 'From your topics in order (freeflow shows rarely run to plan — record with the live desk and the chapters follow what actually happened).' : 'Generated from your episode rundown. Record with the live desk to get chapters from the real timings.')
+          + (vid ? ' YouTube needs the first chapter at 00:00, at least three chapters, each 10 seconds or longer.' : '')),
+      h('pre', { class: 'inp', style: { maxHeight: '180px', overflow: 'auto', background: 'var(--surface2)', padding: '10px 14px', fontFamily: 'var(--mono)', fontSize: '13px' } },
+        ch.list.length ? ch.list.map(c => `${M.stamp(c.sec)} - ${c.title}`).join('\n') : 'No active segments in rundown yet.'));
+    const clipCard = vid || clips.length ? h('div', { class: 'card', style: { padding: '16px 20px' } },
+      h('div', { class: 'row', style: { marginBottom: '10px' } }, h('h3', { style: { margin: 0, fontSize: '16px' } }, `Clips for social${vid && vm.video.clips ? ` (${vm.video.clips})` : ''} · ${clips.length}`), h('span', { class: 'grow' }),
+        clips.length ? h('button', { class: 'btn sm', onclick: () => copy(vm.clipText, 'Clip list copied') }, icon('copy', 14), 'Copy clip list') : null),
+      clips.length ? h('pre', { class: 'inp', style: { maxHeight: '160px', overflow: 'auto', background: 'var(--surface2)', padding: '10px 14px', fontFamily: 'var(--mono)', fontSize: '13px' } }, vm.clipText)
+        : h('p', { class: 'small muted', style: { margin: 0 } }, 'Mark clips while recording on the live desk (“Clip in” / “Clip out”, or ⭐ for a highlight) and they’re listed here with in and out times.')) : null;
+    const metaCard = h('div', { class: 'card', style: { padding: '16px 20px' } },
+      h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, 'Episode Description & Links'),
+      h('div', { class: 'field' }, h('label', { class: 'lbl' }, 'Episode Summary / Description'), h('textarea', { class: 'inp', rows: 4, value: n.summary || '', placeholder: 'In this episode, we dive into…', oninput: set('summary') })),
+      h('div', { class: 'field' }, h('label', { class: 'lbl' }, vid ? 'Episode / Video Title Ideas (Ranked / A/B test)' : 'Episode Title Ideas (Ranked / A/B test)'), h('input', { class: 'inp', value: n.titleOptions || '', placeholder: '1. Shocking discovery… | 2. Inside the Arctic Base… | 3. The Signal', oninput: set('titleOptions') })),
+      vid ? h('div', { class: 'row wrap', style: { gap: '12px' } },
+        h('div', { class: 'field', style: { flex: 1, minWidth: '240px' } }, h('label', { class: 'lbl' }, 'Video link (YouTube / Spotify video)'), h('input', { class: 'inp', value: n.watch || '', placeholder: 'https://youtube.com/watch?v=…', oninput: set('watch') })),
+        h('div', { class: 'field', style: { flex: 1, minWidth: '240px' } }, h('label', { class: 'lbl' }, 'Tags / keywords'), h('input', { class: 'inp', value: n.tags || '', placeholder: 'podcast, interview, acoustics', oninput: set('tags') }))) : null,
+      h('div', { class: 'field' }, h('label', { class: 'lbl' }, 'Additional Links & Resources Mentioned'), h('textarea', { class: 'inp', rows: 3, value: n.links || '', placeholder: '• Study referenced: https://…\n• Recommended tool: https://…', oninput: set('links') })));
+    const outCard = h('div', { class: 'card', style: { padding: '16px 20px', background: 'var(--surface2)' } },
+      h('div', { class: 'row', style: { marginBottom: '10px', gap: '8px' } }, h('h3', { style: { margin: 0, fontSize: '16px' } }, 'Compiled Show Notes'), h('span', { class: 'grow' }),
+        h('button', { class: 'btn primary', onclick: () => copy(vm.showNotes, 'Full show notes copied to clipboard') }, icon('copy', 15), 'Copy complete show notes'),
+        h('button', { class: 'btn', onclick: () => download(slugOf(vm.P.title) + '-show-notes.md', vm.showNotes, 'text/markdown') }, icon('download', 15), 'Save .md')),
+      out);
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '18px' } }, chCard, clipCard, metaCard, outCard);
+  }
 
-/* ---------------------------------------------------------------
-   Sub-tab 5: Show Notes & Chapter Markers Generator
-   --------------------------------------------------------------- */
-function renderNotesTab(root, P, pd) {
-  root.innerHTML = '';
-
-  // Generate chapter markers automatically from Rundown
-  let cumSec = 0;
-  const chapters = [];
-  pd.rundown.forEach((seg, i) => {
-    if (seg.status === 'Cut') return;
-    chapters.push({
-      time: fmtTimeSec(cumSec),
-      title: seg.title
-    });
-    cumSec += parseDurMin(seg.dur) * 60;
+  /* the clock ticks without a redraw */
+  const unsub = PodTimer.subscribe(() => {
+    const c = $('#podLiveClock'); if (c) c.textContent = f(PodTimer.elapsedSec);
+    const b = $('#podAheadBehind'); if (b) { const [t, tone] = paceText(); b.textContent = t; b.style.color = TONE[tone]; }
   });
-
-  const fullNotes = generateFullShowNotes(P, pd, chapters);
-
-  const container = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '18px' } });
-
-  // Chapter markers preview card
-  const chCard = h('div', { class: 'card', style: { padding: '16px 20px' } },
-    h('div', { class: 'row', style: { marginBottom: '10px' } },
-      h('h3', { style: { margin: 0, fontSize: '16px' } }, 'Episode Chapters (YouTube / Apple / Spotify Timestamps)'),
-      h('span', { class: 'grow' }),
-      h('button', {
-        class: 'btn sm primary',
-        onclick: () => {
-          const txt = chapters.map(c => `${c.time} ${c.title}`).join('\n');
-          navigator.clipboard.writeText(txt);
-          toast('Chapter timestamps copied');
-        }
-      }, icon('copy', 14), 'Copy chapter timestamps')),
-    h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, 'Generated automatically from your episode rundown. Paste directly into your YouTube description or podcast RSS show notes.'),
-    h('pre', {
-      class: 'inp',
-      style: { maxHeight: '180px', overflow: 'auto', background: 'var(--surface2)', padding: '10px 14px', fontFamily: 'var(--mono)', fontSize: '13px' }
-    }, chapters.length ? chapters.map(c => `${c.time} - ${c.title}`).join('\n') : 'No active segments in rundown yet.'));
-
-  // Episode metadata inputs
-  const metaCard = h('div', { class: 'card', style: { padding: '16px 20px' } },
-    h('h3', { style: { margin: '0 0 12px', fontSize: '16px' } }, 'Episode Description & Links'),
-    h('div', { class: 'field' },
-      h('label', { class: 'lbl' }, 'Episode Summary / Description'),
-      h('textarea', {
-        class: 'inp',
-        rows: 4,
-        value: pd.notes.summary || '',
-        placeholder: 'In this episode, we dive into…',
-        oninput: e => { pd.notes.summary = e.target.value; Store.touch(); refreshOutput(); }
-      })),
-    h('div', { class: 'field' },
-      h('label', { class: 'lbl' }, 'Episode Title Ideas (Ranked / A/B test)'),
-      h('input', {
-        class: 'inp',
-        value: pd.notes.titleOptions || '',
-        placeholder: '1. Shocking discovery… | 2. Inside the Arctic Base… | 3. The Signal',
-        oninput: e => { pd.notes.titleOptions = e.target.value; Store.touch(); }
-      })),
-    h('div', { class: 'field' },
-      h('label', { class: 'lbl' }, 'Additional Links & Resources Mentioned'),
-      h('textarea', {
-        class: 'inp',
-        rows: 3,
-        value: pd.notes.links || '',
-        placeholder: '• Study referenced: https://…\n• Recommended tool: https://…',
-        oninput: e => { pd.notes.links = e.target.value; Store.touch(); refreshOutput(); }
-      })));
-
-  // Output Box with One-Click Copy
-  const outputCard = h('div', { class: 'card', style: { padding: '16px 20px', background: 'var(--surface2)' } },
-    h('div', { class: 'row', style: { marginBottom: '10px' } },
-      h('h3', { style: { margin: 0, fontSize: '16px' } }, 'Compiled Show Notes'),
-      h('span', { class: 'grow' }),
-      h('button', {
-        class: 'btn primary',
-        onclick: () => {
-          navigator.clipboard.writeText(fullNotes);
-          toast('Full show notes copied to clipboard');
-        }
-      }, icon('copy', 15), 'Copy complete show notes'),
-      h('button', {
-        class: 'btn',
-        onclick: () => download(slug(P.title) + '-show-notes.md', fullNotes, 'text/markdown')
-      }, icon('download', 15), 'Save .md')),
-    h('pre', {
-      id: 'podNotesOutput',
-      class: 'inp',
-      style: { minHeight: '220px', maxHeight: '350px', overflow: 'auto', background: 'var(--surface)', padding: '12px 16px', fontSize: '13px', lineHeight: '1.5' }
-    }, fullNotes));
-
-  function refreshOutput() {
-    const el = $('#podNotesOutput');
-    if (el) el.textContent = generateFullShowNotes(P, pd, chapters);
-  }
-
-  container.append(chCard, metaCard, outputCard);
-  root.append(container);
-}
-
-function generateFullShowNotes(P, pd, chapters) {
-  const parts = [];
-  parts.push(P.title);
-  if (P.series) parts.push(`${P.series.name} · ${epCode(P.series)}`);
-  parts.push('='.repeat(40), '');
-
-  if (pd.notes.summary) {
-    parts.push(pd.notes.summary, '');
-  }
-
-  if (chapters && chapters.length) {
-    parts.push('TIMESTAMPS / CHAPTERS:', '-'.repeat(25));
-    chapters.forEach(c => parts.push(`${c.time} - ${c.title}`));
-    parts.push('');
-  }
-
-  if (pd.guests && pd.guests.length) {
-    parts.push('FEATURED GUESTS:', '-'.repeat(25));
-    pd.guests.forEach(g => {
-      parts.push(`• ${g.name}${g.title ? ' (' + g.title + ')' : ''}`);
-      if (g.plugs) parts.push(`  Links: ${g.plugs.replace(/\n/g, ' · ')}`);
-    });
-    parts.push('');
-  }
-
-  if (pd.sponsors && pd.sponsors.length) {
-    parts.push('SPONSOR DISCOUNTS & OFFERS:', '-'.repeat(25));
-    pd.sponsors.forEach(s => {
-      parts.push(`• ${s.name}: ${s.url ? s.url : ''} ${s.code ? '(Use code: ' + s.code + ')' : ''}`);
-    });
-    parts.push('');
-  }
-
-  if (pd.notes.links) {
-    parts.push('RESOURCES & LINKS MENTIONED:', '-'.repeat(25));
-    parts.push(pd.notes.links, '');
-  }
-
-  return parts.join('\n');
-}
+  const offRec = rec.subscribe(draw);
+  const unbind = bindView(vm, draw);
+  return () => { unsub(); offRec(); rec.dispose(); clearTimeout(gearTimer); unbind(); };
+};
 
 /* ===============================================================
    Sample Podcast Project Generator
@@ -1457,159 +741,172 @@ async function createPodcastSample() {
 }
 
 /* ===============================================================
-   Live recording desk — built on the live desk (livedesk.js), so it
+   Live recording desk — VIEW. Built on the live desk (livedesk.js), so it
    reads and behaves like every other live dashboard. Everything that
    happens in a session (the recording clock, editor markers, problems,
    check-in, pre-flight) is saved with the project, so a reload or a
-   sleeping tablet never loses a take.
+   sleeping tablet never loses a take. Rules: PodLiveModel; screen state
+   and actions: PodLiveVM (js/models/podlive.model.js, js/viewmodels/podlive.vm.js).
    =============================================================== */
-const POD_SESSION = { id: 'podcast' };
-const POD_MARKS = [['retake', '🔖 Retake', 'Retake / line flub'], ['quote', '⭐ Clip', 'Highlight / golden quote'], ['cut', '✂ Cut', 'Cut point / dead air'], ['glitch', '⚠ Glitch', 'Audio glitch / mic pop']];
-const POD_PREFLIGHT = [['levels', 'Mic input levels checked (−12 dB peaks)'], ['backup', 'Backup / 32-bit float recording running'], ['room', 'HVAC, fans & room noise off'], ['headphones', 'Zero-latency headphone monitor'], ['notify', 'Phone & computer notifications off'], ['water', 'Water at hand']];
-
-/* bring the recording clock back from the saved session (after a reload or another project) */
-function podHydrate(P, L) {
-  L.markers = L.markers || []; L.preflight = L.preflight || {}; L.rec = L.rec || {};
-  if (PodTimer.pid === P.id) { PodTimer.markers = L.markers; return; }
-  PodTimer.pause(); PodTimer.pid = P.id; PodTimer.markers = L.markers; PodTimer.preflight = L.preflight;
-  const r = L.rec; PodTimer.activeSegIdx = r.seg || 0; PodTimer.segStartSec = r.segStart || 0;
-  PodTimer.elapsedSec = r.running && r.startTime ? Math.floor((Date.now() - r.startTime) / 1000) : (r.elapsed || 0);
-  if (r.running) PodTimer.start();
-}
-const podSave = L => { L.rec = { running: PodTimer.running, startTime: PodTimer.startTime, elapsed: PodTimer.elapsedSec, seg: PodTimer.activeSegIdx, segStart: PodTimer.segStartSec }; };
-
-function renderPodcastLive(root, P) {
-  const pd = POD(P), L = liveOf(P, POD_SESSION); podHydrate(P, L);
+function renderPodcastLive(root, P0) {
+  const vm = new PodLiveVM();
   const wrap = h('div', { class: 'live ld pod-live' + (UI.liveTV ? ' tv' : '') }); root.append(wrap);
-  const flash = () => { podSave(L); Store.touch(); draw(); };
-  const mark = (label, kind = 'marker') => { PodTimer.addMarker(label, kind); PodAudio.playPing(); };
-  const askMarker = async (pre = '') => { const l = await promptBox('Editor marker', 'What happened at this moment?', pre); if (l) { mark(l, 'custom'); flash(); } };
-  const cx = { P, L, key: 'pod', flash, redraw: () => draw(), date: todayISO(), itemWord: 'Segment', issueCats: ['Audio', 'Room', 'Connection', 'Guest', 'Equipment', 'Content', 'Other'],
-    quickIssues: [['Mic clipping', 'Audio', 'High'], ['Background noise', 'Room', 'Medium'], ['Guest connection drop', 'Connection', 'High']], stamp: () => PodTimer.elapsedSec };
+  const f = PodLiveModel.fmtSec, dmin = PodLiveModel.parseDur;
+  const askMarker = async (pre = '') => { const l = await promptBox('Editor marker', 'What happened at this moment?', pre); if (l) vm.mark(l, 'custom'); };
+  const nextSeg = () => { if (!vm.next()) toast(vm.isFree ? 'No topics left — wrap when you’re done, or park a new one.' : 'That was the last segment — wrap the session when you’re done.'); };
+  const askPark = async () => { const t = await promptBox('Park a tangent', 'A topic to come back to if there’s time', ''); if (t) { vm.park(t); toast('Parked for later'); } };
+  const cx = { key: 'pod', itemWord: vm.itemWord, issueCats: vm.issueCats, quickIssues: vm.quickIssues, redraw: () => vm.refresh(), flash: () => vm.refresh(), edit: fn => vm.edit(fn), stamp: () => vm.stamp };
+  async function wrapSession() {
+    if (!(await confirmBox(`Wrap this session? ${f(vm.clock.elapsedSec)} recorded, ${vm.markers.length} markers. A hand-off sheet goes to the editor and the daily report.`, 'Wrap session', 'Wrap the recording?'))) return;
+    const ho = vm.wrap(), stat = (l, v) => h('div', { class: 'ld-tile' }, h('span', { class: 'ld-l' }, l), h('b', { class: 'ld-v' }, v));
+    modal({ title: 'Session wrapped', wide: true, body: h('div', {}, h('div', { class: 'ld-head' }, stat('Recorded', f(ho.recorded)), stat(`${vm.itemWord}s covered`, `${ho.covered}/${ho.total}`), stat('Markers', String(ho.markers)), ho.clips ? stat('Clips', String(ho.clips)) : null, stat('Problems', String(ho.problems))),
+      h('label', { class: 'lbl' }, 'Hand-off sheet for the editor — also saved in the daily report'), h('textarea', { class: 'inp mono', rows: 12, readOnly: true, value: ho.text })),
+      buttons: [{ label: 'Reports', onClick: () => { location.hash = `#/p/${vm.P.id}/reports`; } }, { label: 'Close' }, { label: 'Copy for the editor', primary: true, onClick: () => { navigator.clipboard.writeText(ho.text); toast('Hand-off sheet copied'); return false; } }] });
+  }
+  const micToggle = async () => { if (PodMicMeter.active) { PodMicMeter.stop(); PodTimer.micMeterActive = false; } else PodTimer.micMeterActive = await PodMicMeter.start(() => vuUpdate()); vm.refresh(); };
 
-  const acts = {};   // the current segment's actions, for the keyboard
   function draw() {
-    const rundown = pd.rundown;
+    const P = vm.P, pd = vm.pd, rundown = vm.rundown, L = vm.L;
     if (!rundown.length) {
       morph(wrap, h('div', { class: 'ld-card empty ld-start' }, icon('cue', 32), h('h3', {}, 'No rundown for this episode yet'),
         h('p', { class: 'muted' }, 'The live desk runs your recording from the episode rundown: segments and timing, talking points, guest prep, sponsor reads and editor markers.'),
-        h('div', { class: 'ld-btns' }, h('button', { class: 'btn primary', onclick: () => { applyTemplate('interview', P, pd); flash(); } }, 'Use the interview template'), h('a', { class: 'btn', href: `#/p/${P.id}/rundown` }, 'Open the rundown planner'))));
+        h('div', { class: 'ld-btns' }, h('button', { class: 'btn primary', onclick: () => vm.useTemplate('interview') }, 'Use the interview template'), h('button', { class: 'btn', onclick: () => vm.useTemplate('conversation') }, 'Freeflow conversation'),
+          h('a', { class: 'btn', href: `#/p/${P.id}/rundown` }, 'Open the rundown planner'))));
       return;
     }
-    const curIdx = PodTimer.activeSegIdx = Math.min(PodTimer.activeSegIdx, rundown.length - 1), cur = rundown[curIdx], next = rundown.slice(curIdx + 1).find(s => s.status !== 'Cut') || null;
-    let cum = 0; const tm = rundown.map(s => { const start = cum, dur = s.status === 'Cut' ? 0 : parseDurMin(s.dur); cum += dur; return { start, dur }; }), totalMin = cum;
-    const live = PodTimer.running, begun = PodTimer.elapsedSec > 0;
-    const segEl = Math.max(0, PodTimer.elapsedSec - PodTimer.segStartSec), segTarget = Math.max(30, parseDurMin(cur.dur) * 60), segOver = segEl - segTarget;
-    const plannedAt = tm[curIdx].start * 60 + Math.min(segEl, segTarget), diff = PodTimer.elapsedSec - plannedAt;
-    const pace = !begun ? ['Ready', 'muted'] : Math.abs(diff) < 30 ? ['On time', 'good'] : diff > 0 ? [`Behind ${fmtTimeSec(diff)}`, diff > 180 ? 'bad' : 'warn'] : [`Ahead ${fmtTimeSec(-diff)}`, 'info'];
-    const remainMin = tm.slice(curIdx + 1).reduce((a, x) => a + x.dur, 0) + Math.max(0, segTarget - segEl) / 60, endAt = nowMin() + remainMin;
-    const covered = rundown.filter(s => s.status === 'Covered').length, active = rundown.filter(s => s.status !== 'Cut').length;
-    const openIss = L.issues.filter(i => i.status !== 'Resolved'), pre = POD_PREFLIGHT.filter(([k]) => L.preflight[k]).length;
-    const guest = cur.guestId ? pd.guests.find(g => g.id === cur.guestId) : null, sponsor = cur.sponsorId ? pd.sponsors.find(s => s.id === cur.sponsorId) : null;
-
-    /* actions */
-    const goTo = i => { if (cur.status === 'Recording') cur.status = i > curIdx ? 'Covered' : 'Planned'; PodTimer.activeSegIdx = i; PodTimer.segStartSec = PodTimer.elapsedSec; if (live && rundown[i].status === 'Planned') rundown[i].status = 'Recording'; mark(`Started: ${rundown[i].title}`, 'segment'); liveLog(L, `Segment ${i + 1}: ${rundown[i].title}`, 'scene'); flash(); };
-    const nextSeg = () => { const i = rundown.findIndex((s, j) => j > curIdx && s.status !== 'Cut'); if (i < 0) { cur.status = 'Covered'; toast('That was the last segment — wrap the session when you’re done.'); flash(); return; } cur.status = 'Covered'; goTo(i); };
-    const record = () => { if (live) { PodTimer.pause(); liveLog(L, `Paused at ${fmtTimeSec(PodTimer.elapsedSec)}`, 'sys'); } else { if (!L.started) L.started = Date.now(); PodTimer.start(); if (cur.status === 'Planned') cur.status = 'Recording'; liveLog(L, begun ? `Resumed at ${fmtTimeSec(PodTimer.elapsedSec)}` : 'Recording started', 'sys'); } flash(); };
-    const wrapSession = async () => { if (!(await confirmBox(`Wrap this session? ${fmtTimeSec(PodTimer.elapsedSec)} recorded, ${PodTimer.markers.length} markers. A hand-off sheet goes to the editor and the daily report.`, 'Wrap session', 'Wrap the recording?'))) return; PodTimer.pause(); if (cur.status === 'Recording') cur.status = 'Covered'; mark(`Session wrapped (${fmtTimeSec(PodTimer.elapsedSec)})`, 'sys'); L.ended = Date.now(); liveLog(L, 'Session wrapped', 'sys'); podSave(L); openSessionWrapModal(P, pd, rundown, L); flash(); };
-    acts.record = record; acts.next = nextSeg;
-    const micToggle = async () => { if (PodMicMeter.active) { PodMicMeter.stop(); PodTimer.micMeterActive = false; } else PodTimer.micMeterActive = await PodMicMeter.start(() => vuUpdate()); flash(); };
+    const st = vm.state, curIdx = st.idx, cur = st.cur, next = st.next, live = st.live, begun = st.begun, tm = st.timing;
+    const openIss = vm.openIssues, pre = vm.preflightDone, guest = vm.guestOf(cur), sponsor = vm.sponsorOf(cur), unread = vm.unreadSponsors, free = st.free, video = vm.isVideo, W = vm.itemWord;
 
     /* header */
     const header = h('div', { class: 'ld-head' },
-      h('div', { class: 'ld-tile ld-clock rec' + (live ? ' on' : '') }, h('b', { class: 'ld-v mono', id: 'podLiveClock' }, fmtTimeSec(PodTimer.elapsedSec)), h('span', { class: 'ld-s', id: 'podLiveState' }, h('i', { class: 'rec-dot' }), live ? 'Recording' : begun ? 'Paused' : 'Studio ready')),
-      ldTile('Pacing', pace[0], `Runs ~${Math.round(totalMin)} min · ends ~${clockTxt(endAt)}`, pace[1]),
-      ldTile('Segment', `${curIdx + 1} of ${rundown.length}`, `${covered}/${active} covered`, '', ldProgress(active ? covered / active * 100 : 0, 'good')),
-      ldTile('Markers', String(PodTimer.markers.length), 'for the editor'),
+      h('div', { class: 'ld-tile ld-clock rec' + (live ? ' on' : '') }, h('b', { class: 'ld-v mono', id: 'podLiveClock' }, f(vm.clock.elapsedSec)), h('span', { class: 'ld-s', id: 'podLiveState' }, h('i', { class: 'rec-dot' }), live ? 'Recording' : begun ? 'Paused' : 'Studio ready')),
+      free ? ldTile('Time', st.pace[0], `Target ${Math.round(st.totalMin)} min · ends ~${clockTxt(vm.endAt(st))}`, st.pace[1])
+        : ldTile('Pacing', st.pace[0], `Runs ~${Math.round(st.totalMin)} min · ends ~${clockTxt(vm.endAt(st))}`, st.pace[1]),
+      free ? ldTile('Topics', `${st.covered} of ${st.active}`, st.mustLeft.length ? `${st.mustLeft.length} must-cover left` : 'must-covers done', st.mustLeft.length && st.pace[1] !== 'good' && st.begun ? 'warn' : '', ldProgress(st.active ? st.covered / st.active * 100 : 0, 'good'))
+        : ldTile('Segment', `${curIdx + 1} of ${rundown.length}`, `${st.covered}/${st.active} covered`, '', ldProgress(st.active ? st.covered / st.active * 100 : 0, 'good')),
+      video ? ldTile('On camera', vm.curCam ? vm.curCam.split(' · ')[0] : '—', vm.curCam ? vm.curCam.split(' · ').slice(1).join(' · ') || 'live' : `${vm.cameras.length} camera${vm.cameras.length === 1 ? '' : 's'}`) : null,
+      ldTile('Markers', String(vm.markers.length), 'for the editor'),
       ldTile('Problems', String(openIss.length), openIss.length ? 'open' : 'all clear', openIss.some(i => sevRank(i.sev) >= 2) ? 'bad' : openIss.length ? 'warn' : ''),
       h('div', { class: 'ld-actions' },
-        h('button', { class: 'btn big ' + (live ? '' : 'primary rec-btn'), onclick: record, title: 'Record / pause (Space)' }, icon(live ? 'pause' : 'play', 16), live ? 'Pause' : begun ? 'Resume' : 'Record'),
-        h('button', { class: 'btn', onclick: nextSeg, title: 'Finish this segment and start the next (N)' }, icon('right', 15), 'Next'),
+        h('button', { class: 'btn big ' + (live ? '' : 'primary rec-btn'), onclick: () => vm.record(), title: 'Record / pause (Space)' }, icon(live ? 'pause' : 'play', 16), live ? 'Pause' : begun ? 'Resume' : 'Record'),
+        h('button', { class: 'btn', onclick: nextSeg, title: `Finish this ${W.toLowerCase()} and start the next (N)` }, icon('right', 15), 'Next'),
         h('button', { class: 'btn', onclick: wrapSession }, 'Wrap'),
         h('button', { class: 'icon-btn' + (PodMicMeter.active ? ' on' : ''), onclick: micToggle, title: PodMicMeter.active ? 'Stop the mic meter' : 'Mic level meter', 'aria-label': 'Mic level meter' }, icon('cue', 17)),
         h('button', { class: 'icon-btn', onclick: () => ldTV(wrap), title: 'Big-display mode (T)', 'aria-label': 'Big-display mode' }, icon('focus', 17))));
 
     /* alerts */
-    const alerts = [];
-    openIss.filter(i => i.sev === 'Critical').forEach(i => alerts.push(['crit', `Critical: ${i.title}`]));
-    if (guest && guest.nogo) alerts.push(['crit', `${guest.name} — off limits: ${guest.nogo}`]);
-    if (segOver > 30) alerts.push(['warn', `“${cur.title}” is ${fmtTimeSec(segOver)} over its ${parseDurMin(cur.dur)} min`, { label: '+2 min', fn: () => { cur.dur = (parseFloat(cur.dur) || 1) + 2; flash(); } }]);
-    if (!begun && pre < POD_PREFLIGHT.length) alerts.push(['warn', `Pre-flight: ${pre} of ${POD_PREFLIGHT.length} checks done`, { label: 'Show', fn: () => { LD.setOpen('pod:preflight', true); draw(); } }]);
-    const unread = pd.sponsors.filter(s => !s.recorded); if (begun && unread.length && !rundown.slice(curIdx + 1).some(s => s.sponsorId)) alerts.push(['tip', `${unread.length} sponsor read${unread.length > 1 ? 's' : ''} not recorded yet: ${unread.map(s => s.name).join(', ')}`]);
+    const act = { addTime: () => vm.addTime(cur.id), sync: () => vm.sync(), showPreflight: () => { LD.setOpen('pod:preflight', true); draw(); } };
+    const alerts = vm.alerts(st).map(([tone, msg, a]) => [tone, msg, a ? { label: a.label, fn: act[a.cmd] } : null]);
 
     /* on air */
-    const bullets = (cur.bullets || '').split('\n').filter(Boolean);
-    const onAir = h('div', { class: 'ld-card s-active' + (segOver > 0 ? ' over' : ''), 'data-key': 'onair' },
-      h('div', { class: 'ld-card-h' }, h('span', { class: 'ld-l' }, live ? `On air · segment ${curIdx + 1}` : `Segment ${curIdx + 1}`), h('span', { class: 'grow' }),
-        h('span', { class: 'ld-big mono' + (segOver > 0 ? ' neg' : ''), id: 'podSegTime' }, `${fmtTimeSec(segEl)} / ${fmtTimeSec(segTarget)}`)),
+    const bullets = (cur.bullets || '').split('\n').filter(Boolean), pr = vm.prompter;
+    const onAir = h('div', { class: 'ld-card s-active' + (st.segOver > 0 ? ' over' : ''), 'data-key': 'onair' },
+      h('div', { class: 'ld-card-h' }, h('span', { class: 'ld-l' }, free ? (live ? 'On air · topic' : 'Topic') : live ? `On air · segment ${curIdx + 1}` : `Segment ${curIdx + 1}`),
+        free ? h('span', { class: 'pill', style: { background: PodcastModel.PRIORITY_TONE[cur.priority || 'Nice'], color: '#fff', marginLeft: '8px' } }, PodcastModel.PRIORITY_LABEL[cur.priority || 'Nice']) : null, h('span', { class: 'grow' }),
+        h('span', { class: 'ld-big mono' + (st.segOver > 0 ? ' neg' : ''), id: 'podSegTime' }, free ? `${f(st.segEl)} · ~${f(st.segTarget)}` : `${f(st.segEl)} / ${f(st.segTarget)}`)),
       h('div', { class: 'ld-title' }, h('b', {}, cur.title)),
-      ldProgress(segEl / segTarget * 100, segOver > 0 ? 'bad' : 'info'),
-      cur.cues ? h('div', { class: 'ld-cue' }, icon('cue', 15), h('span', { class: 'grow' }, cur.cues), h('button', { class: 'btn sm primary', onclick: () => { PodAudio.playChime(); mark(`Cue: ${cur.cues}`, 'cue'); flash(); } }, icon('play', 12), 'Fire cue')) : null,
-      P.blocks && P.blocks.length > 2 ? h('div', { class: 'seg sm' }, [['bullets', 'Talking points'], ['script', 'Script']].map(([k, l]) => h('button', { class: (PodTimer.scriptPrompter ? 'script' : 'bullets') === k ? 'on' : '', onclick: () => { PodTimer.scriptPrompter = k === 'script'; draw(); } }, l))) : null,
-      PodTimer.scriptPrompter ? renderScriptPrompter(P, () => draw()) : renderBulletsChecklist(cur, bullets),
-      sponsor ? renderEmbeddedSponsorBox(sponsor, flash) : null, guest ? renderEmbeddedGuestBox(guest, flash) : null,
-      h('div', { class: 'ld-btns' }, h('button', { class: 'btn primary big', onclick: nextSeg }, icon('check', 16), next ? 'Done — next segment' : 'Done'),
-        h('button', { class: 'btn', onclick: () => { cur.dur = (parseFloat(cur.dur) || 1) + 2; flash(); } }, '+2 min'),
+      ldProgress(free ? Math.min(100, st.segEl / st.segTarget * 100) : st.segEl / st.segTarget * 100, st.segOver > 0 ? 'bad' : free && st.segEl > st.segTarget ? 'warn' : 'info'),
+      video && (cur.cam || cur.gfx) ? h('div', { class: 'ld-chips' }, cur.cam ? h('span', { class: 'chip' }, icon('camera', 12), cur.cam) : null, ...(cur.gfx || '').split('\n').filter(Boolean).map(g => h('span', { class: 'chip' }, icon('monitor', 12), g))) : null,
+      cur.cues ? h('div', { class: 'ld-cue' }, icon('cue', 15), h('span', { class: 'grow' }, cur.cues), h('button', { class: 'btn sm primary', onclick: () => vm.fireCue() }, icon('play', 12), 'Fire cue')) : null,
+      P.blocks && P.blocks.length > 2 ? h('div', { class: 'seg sm' }, [['bullets', 'Talking points'], ['script', 'Script']].map(([k, l]) => h('button', { class: (pr.on ? 'script' : 'bullets') === k ? 'on' : '', onclick: () => vm.setPrompter({ on: k === 'script' }) }, l))) : null,
+      pr.on ? renderScriptPrompter(P, pr) : renderBulletsChecklist(cur, bullets),
+      sponsor ? renderEmbeddedSponsorBox(sponsor) : null, guest ? renderEmbeddedGuestBox(guest) : null,
+      h('div', { class: 'ld-btns' }, h('button', { class: 'btn primary big', onclick: nextSeg }, icon('check', 16), next ? `Done — next ${W.toLowerCase()}` : 'Done'),
+        free ? h('button', { class: 'btn', onclick: askPark, title: 'Park a tangent to come back to (P)' }, '↪ Park a tangent') : h('button', { class: 'btn', onclick: () => vm.addTime(cur.id) }, '+2 min'),
         h('button', { class: 'btn', onclick: () => askMarker(`[${cur.title}] `) }, icon('flag', 14), 'Marker'),
-        h('span', { class: 'grow' }), h('button', { class: 'btn ghost danger', onclick: () => { cur.status = 'Cut'; mark(`Cut segment: ${cur.title}`, 'warn'); liveLog(L, `Cut segment: ${cur.title}`, 'warn'); nextSeg(); } }, 'Cut segment')));
+        h('span', { class: 'grow' }), h('button', { class: 'btn ghost danger', onclick: () => { if (!vm.cut()) toast(free ? 'No topics left — wrap when you’re done.' : 'That was the last segment — wrap the session when you’re done.'); } }, free ? 'Skip topic' : 'Cut segment')));
     const upNext = next ? h('div', { class: 'ld-card s-next', 'data-key': 'next' },
-      h('div', { class: 'ld-card-h' }, h('span', { class: 'ld-l' }, `Up next · segment ${rundown.indexOf(next) + 1}`), h('span', { class: 'grow' }), h('span', { class: 'ld-meta' }, `${parseDurMin(next.dur)} min`)),
+      h('div', { class: 'ld-card-h' }, h('span', { class: 'ld-l' }, free ? `Suggested next · ${PodcastModel.PRIORITY_LABEL[next.priority || 'Nice'].toLowerCase()}` : `Up next · segment ${rundown.indexOf(next) + 1}`), h('span', { class: 'grow' }), h('span', { class: 'ld-meta' }, `${free ? '~' : ''}${dmin(next.dur)} min`)),
       h('div', { class: 'ld-title' }, h('b', {}, next.title)), next.bullets ? h('div', { class: 'ld-syn clip2' }, next.bullets.split('\n').filter(Boolean).slice(0, 2).join(' · ')) : null,
-      h('div', { class: 'ld-chips' }, next.cues ? h('span', { class: 'chip' }, icon('cue', 12), next.cues) : null, next.guestId ? h('span', { class: 'chip' }, icon('user', 12), (pd.guests.find(g => g.id === next.guestId) || {}).name || 'Guest') : null, next.sponsorId ? h('span', { class: 'chip' }, icon('dollar', 12), (pd.sponsors.find(s => s.id === next.sponsorId) || {}).name || 'Sponsor') : null),
-      h('div', { class: 'ld-btns' }, h('button', { class: 'btn', onclick: () => goTo(rundown.indexOf(next)) }, 'Jump to it'))) : h('div', { class: 'ld-card empty' }, h('span', { class: 'ld-l' }, 'Up next'), h('p', { class: 'muted' }, 'This is the last segment.'));
+      h('div', { class: 'ld-chips' }, next.cues ? h('span', { class: 'chip' }, icon('cue', 12), next.cues) : null, next.guestId ? h('span', { class: 'chip' }, icon('user', 12), (vm.guestOf(next) || {}).name || 'Guest') : null, next.sponsorId ? h('span', { class: 'chip' }, icon('dollar', 12), (vm.sponsorOf(next) || {}).name || 'Sponsor') : null),
+      h('div', { class: 'ld-btns' }, h('button', { class: 'btn', onclick: () => vm.goTo(rundown.indexOf(next)) }, free ? 'Talk about this' : 'Jump to it'))) : h('div', { class: 'ld-card empty' }, h('span', { class: 'ld-l' }, 'Up next'), h('p', { class: 'muted' }, free ? 'Every topic has been talked about.' : 'This is the last segment.'),
+        free ? h('div', { class: 'ld-btns' }, h('button', { class: 'btn', onclick: askPark }, '↪ Park a new topic')) : null);
 
     /* running order */
-    const move = (i, d) => { const j = i + d; if (j < 0 || j >= rundown.length) return; [rundown[i], rundown[j]] = [rundown[j], rundown[i]]; if (PodTimer.activeSegIdx === i) PodTimer.activeSegIdx = j; else if (PodTimer.activeSegIdx === j) PodTimer.activeSegIdx = i; flash(); };
-    const order = ldPanel('pod:order', { title: 'Running order', ico: 'list', count: `${covered}/${active}`, hint: `~${Math.round(totalMin)} min`,
-      tools: [h('button', { class: 'btn sm ghost', onclick: async () => { const t = await promptBox('Add a segment', 'Title of the new topic or segment', ''); if (t) { rundown.splice(curIdx + 1, 0, newSegment({ title: t, dur: 5 })); flash(); } } }, icon('plus', 13), 'Segment'), h('a', { class: 'btn sm ghost', href: `#/p/${P.id}/rundown` }, 'Planner')],
-      body: () => h('div', { class: 'ld-list ld-ro' }, rundown.map((s, i) => h('div', { class: 'ld-ro-row s-' + s.status.toLowerCase() + (i === curIdx ? ' cur' : ''), 'data-key': s.id },
-        h('span', { class: 'ld-time mono' }, `+${Math.floor(tm[i].start)}′`), h('button', { class: 'ld-ro-t', onclick: () => goTo(i), title: 'Go to this segment' }, h('b', {}, `${i + 1}. `), s.title),
-        h('span', { class: 'ld-meta' }, `${parseDurMin(s.dur)}m`),
-        h('button', { class: 'pill st', style: { background: RUNDOWN_TONE[s.status] || '#888' }, title: 'Tap to change: planned → recording → covered → cut', onclick: () => { s.status = { Planned: 'Recording', Recording: 'Covered', Covered: 'Cut', Cut: 'Planned' }[s.status] || 'Planned'; flash(); } }, s.status),
-        ibtn('up', 'Earlier', () => move(i, -1)), ibtn('down', 'Later', () => move(i, 1))))) }, draw);
+    const roRow = (s, i) => h('div', { class: 'ld-ro-row s-' + s.status.toLowerCase() + (i === curIdx ? ' cur' : ''), 'data-key': s.id },
+      free ? h('span', { class: 'ld-time', title: PodcastModel.PRIORITY_LABEL[s.priority || 'Nice'], style: { color: PodcastModel.PRIORITY_TONE[s.priority || 'Nice'], fontWeight: 700 } }, (s.priority || 'Nice') === 'If time' ? 'If' : s.priority || 'Nice')
+        : h('span', { class: 'ld-time mono' }, `+${Math.floor(tm[i].start)}′`),
+      h('button', { class: 'ld-ro-t', onclick: () => vm.goTo(i), title: free ? 'Talk about this now' : 'Go to this segment' }, free ? null : h('b', {}, `${i + 1}. `), s.title, s.parked ? ' ↪' : ''),
+      h('span', { class: 'ld-meta' }, `${free ? '~' : ''}${dmin(s.dur)}m`),
+      h('button', { class: 'pill st', style: { background: RUNDOWN_TONE[s.status] || '#888' }, title: 'Tap to change: planned → recording → covered → cut', onclick: () => vm.cycleStatus(s.id) }, s.status),
+      free ? null : ibtn('up', 'Earlier', () => vm.move(i, -1)), free ? null : ibtn('down', 'Later', () => vm.move(i, 1)));
+    /* freeflow: topics still to talk about first (must-covers on top), then the ones done */
+    const rank = s => (s.status === 'Recording' ? 0 : s.status === 'Planned' ? 1 : s.status === 'Covered' ? 2 : 3) * 10 + PodcastModel.PRIORITY.indexOf(s.priority || 'Nice');
+    const orderRows = free ? rundown.map((s, i) => [s, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]) : rundown.map((s, i) => [s, i]);
+    const order = ldPanel('pod:order', { title: free ? 'Topics' : 'Running order', ico: 'list', count: `${st.covered}/${st.active}`, hint: free ? (st.mustLeft.length ? `${st.mustLeft.length} must-cover left` : `${st.topicsLeft} left`) : `~${Math.round(st.totalMin)} min`,
+      tools: [h('button', { class: 'btn sm ghost', onclick: async () => { const t = await promptBox(free ? 'Add a topic' : 'Add a segment', 'Title of the new topic or segment', ''); if (t) vm.addSegment(t); } }, icon('plus', 13), W), free ? h('button', { class: 'btn sm ghost', onclick: askPark }, '↪ Park') : null, h('a', { class: 'btn sm ghost', href: `#/p/${P.id}/rundown` }, 'Planner')],
+      body: () => h('div', { class: 'ld-list ld-ro' }, orderRows.map(([s, i]) => roRow(s, i))) }, draw);
+    /* filmed: switch cameras, clip in / out, sync */
+    const cams = video ? ldPanel('pod:cams', { title: 'Cameras', ico: 'camera', count: vm.cameras.length || '', hint: vm.curCam || 'tap to log a camera switch',
+      tools: [h('a', { class: 'btn sm ghost', href: `#/p/${P.id}/rundown`, onclick: () => { UI.podTab = 'video'; } }, 'Plan')],
+      body: () => [vm.cameras.length ? h('div', { class: 'ld-pad' }, vm.cameras.map((c, i) => h('button', { class: 'btn' + (vm.curCam.startsWith(c.name) ? ' primary' : ''), title: `${c.shot}${c.who ? ' · ' + c.who : ''} (${i + 1})`, onclick: () => vm.camSwitch(c.id) }, `${i < 9 ? i + 1 + ' · ' : ''}${c.name}`, h('small', { class: 'ld-meta', style: { marginLeft: '6px' } }, c.shot))))
+          : h('p', { class: 'ld-empty' }, 'No cameras in the plan — add them under Cameras & set.'),
+        h('div', { class: 'ld-pad' }, h('button', { class: 'btn', onclick: () => vm.mark('Clip in', 'clipIn'), title: 'Clip in (I)' }, '▶ Clip in'), h('button', { class: 'btn', onclick: () => vm.mark('Clip out', 'clipOut'), title: 'Clip out (O)' }, '■ Clip out'), h('button', { class: 'btn', onclick: () => vm.sync(), title: 'Sync clap / slate (S)' }, '👏 Sync clap')),
+        vm.clips.length ? h('div', { class: 'ld-meta' }, `${vm.clips.length} clip${vm.clips.length === 1 ? '' : 's'} marked for social`) : null] }, draw) : null;
 
     /* side panels */
-    const markers = ldPanel('pod:markers', { title: 'Editor markers', ico: 'flag', count: PodTimer.markers.length || '', hint: PodTimer.markers[0] ? PodTimer.markers[0].label.slice(0, 32) : '',
-      tools: [h('button', { class: 'btn sm ghost', onclick: () => { if (!PodTimer.markers.length) return toast('No markers yet', true); navigator.clipboard.writeText([...PodTimer.markers].reverse().map(m => `[${fmtTimeSec(m.time)}] ${m.label}`).join('\n')); toast('Markers copied for the editor'); } }, icon('copy', 13), 'Copy')],
-      body: () => [h('div', { class: 'ld-pad' }, POD_MARKS.map(([k, l, msg]) => h('button', { class: 'btn', onclick: () => { mark(msg, k); flash(); } }, l))),
-        h('input', { class: 'inp ld-quick', placeholder: '+ Describe a marker, Enter', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { mark(e.target.value.trim(), 'custom'); e.target.value = ''; flash(); } } }),
-        ldList('pod:markers', PodTimer.markers, m => h('div', { class: 'ld-ev k-' + m.kind }, h('span', { class: 'ld-time mono' }, fmtTimeSec(m.time)), h('span', { class: 'grow' }, m.label), ibtn('trash', 'Delete marker', () => { const i = PodTimer.markers.indexOf(m); if (i >= 0) PodTimer.markers.splice(i, 1); flash(); }, 'danger')), { limit: 6, empty: 'Tap a button above, or use the R / C / B / M keys.', cls: 'ld-list ld-log' }, draw)] }, draw);
+    const markers = ldPanel('pod:markers', { title: 'Editor markers', ico: 'flag', count: vm.markers.length || '', hint: vm.markers[0] ? vm.markers[0].label.slice(0, 32) : '',
+      tools: [h('button', { class: 'btn sm ghost', onclick: () => { if (!vm.markers.length) return toast('No markers yet', true); navigator.clipboard.writeText(vm.markersText); toast('Markers copied for the editor'); } }, icon('copy', 13), 'Copy')],
+      body: () => [h('div', { class: 'ld-pad' }, vm.marks.map(([k, l, msg]) => h('button', { class: 'btn', onclick: () => vm.mark(msg, k) }, l))),
+        h('input', { class: 'inp ld-quick', placeholder: '+ Describe a marker, Enter', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { const v = e.target.value.trim(); e.target.value = ''; vm.mark(v, 'custom'); } } }),
+        ldList('pod:markers', vm.markers, m => h('div', { class: 'ld-ev k-' + m.kind }, h('span', { class: 'ld-time mono' }, f(m.time)), h('span', { class: 'grow' }, m.label), ibtn('trash', 'Delete marker', () => vm.removeMarker(vm.markers.indexOf(m)), 'danger')), { limit: 6, empty: 'Tap a button above, or use the R / C / B / M keys.', cls: 'ld-list ld-log' }, draw)] }, draw);
     const sounds = [['Intro gong', () => PodAudio.playGong(), 'gong'], ['3-2-1 sync', () => PodAudio.playSyncBeeps(), 'sync'], ['Chime', () => PodAudio.playChime(), 'chime'], ['Bleep', () => PodAudio.playBleep(0.7), 'bleep'], ['Ping', () => PodAudio.playPing(), 'ping']];
     const board = ldPanel('pod:sound', { title: 'Soundboard', ico: 'cue', open: false, hint: 'gong, sync, chime, bleep',
-      tools: [h('label', { class: 'ld-check small' }, h('input', { type: 'checkbox', checked: PodTimer.autoLogSound, onchange: e => { PodTimer.autoLogSound = e.target.checked; } }), 'Log as marker')],
-      body: () => h('div', { class: 'ld-pad' }, sounds.map(([l, fn, k]) => h('button', { class: 'btn', onclick: () => { fn(); if (PodTimer.autoLogSound) { PodTimer.addMarker(`[Sound] ${l}`, k); flash(); } } }, l))) }, draw);
+      tools: [h('label', { class: 'ld-check small' }, h('input', { type: 'checkbox', checked: vm.autoLogSound, onchange: e => vm.setAutoLogSound(e.target.checked) }), 'Log as marker')],
+      body: () => h('div', { class: 'ld-pad' }, sounds.map(([l, fn, k]) => h('button', { class: 'btn', onclick: () => { fn(); if (vm.autoLogSound) vm.logMarker(`[Sound] ${l}`, k); } }, l))) }, draw);
     const meter = PodMicMeter.active ? ldPanel('pod:mic', { title: 'Mic level', ico: 'cue', tools: [h('span', { id: 'podVuClip', class: 'ld-sev', style: { background: 'var(--danger)', display: 'none' } }, 'CLIP'), h('span', { id: 'podVuLabel', class: 'ld-meta mono' }, '— dB')],
       body: () => [h('div', { class: 'vu-meter' }, h('div', { id: 'podVuFill', class: 'vu-fill', style: { width: '0%' } })), h('div', { class: 'ld-row ld-meta', style: { justifyContent: 'space-between' } }, h('span', {}, '−48'), h('span', {}, '−18'), h('span', {}, '−12 target'), h('span', {}, '0 dB'))] }, draw) : null;
-    UI.podLiveGuestIdx = Math.min(UI.podLiveGuestIdx || 0, Math.max(0, pd.guests.length - 1)); const g = guest || pd.guests[UI.podLiveGuestIdx];
-    const guestP = pd.guests.length ? ldPanel('pod:guest', { title: 'Guest', ico: 'user', hint: g ? g.name : '',
-      tools: pd.guests.length > 1 && !guest ? [h('select', { class: 'inp sm', onchange: e => { UI.podLiveGuestIdx = +e.target.value; draw(); } }, pd.guests.map((x, i) => h('option', { value: i, selected: x === g }, x.name)))] : null,
-      body: () => { const qs = (g.questions || '').split('\n').filter(Boolean), asked = qs.filter((q, i) => PodTimer.checkedQuestions.has(`${g.id}-${i}`)).length;
+    const g = vm.panelGuest;
+    const guestP = g ? ldPanel('pod:guest', { title: 'Guest', ico: 'user', hint: g.name,
+      tools: pd.guests.length > 1 && !guest ? [h('select', { class: 'inp sm', onchange: e => vm.pickGuest(e.target.value) }, pd.guests.map((x, i) => h('option', { value: i, selected: x === g }, x.name)))] : null,
+      body: () => { const qs = (g.questions || '').split('\n').filter(Boolean), asked = qs.filter((q, i) => vm.isAsked(`${g.id}-${i}`)).length;
         return [h('div', { class: 'ld-row' }, h('b', {}, g.name), g.pronouns ? h('span', { class: 'pill' }, g.pronouns) : null, h('span', { class: 'grow' }), g.link ? h('a', { class: 'btn sm', href: /^https?:/.test(g.link) ? g.link : 'https://' + g.link, target: '_blank', rel: 'noreferrer' }, 'Join studio') : null),
           g.title ? h('div', { class: 'ld-meta' }, g.title) : null, g.nogo ? h('div', { class: 'ld-warn' }, `Off limits: ${g.nogo}`) : null,
           qs.length ? h('div', { class: 'ld-ctx-l' }, 'Questions', h('em', {}, `${asked}/${qs.length}`)) : null,
-          ldList('pod:q:' + g.id, qs.map((q, i) => [q, `${g.id}-${i}`]), ([q, k]) => h('label', { class: 'ld-check' + (PodTimer.checkedQuestions.has(k) ? ' done' : '') }, h('input', { type: 'checkbox', checked: PodTimer.checkedQuestions.has(k), onchange: e => { e.target.checked ? PodTimer.checkedQuestions.add(k) : PodTimer.checkedQuestions.delete(k); draw(); } }), h('span', {}, q)), { limit: 6 }, draw)]; } }, draw) : null;
-    UI.podLiveSponsorIdx = Math.min(UI.podLiveSponsorIdx || 0, Math.max(0, pd.sponsors.length - 1)); const sp = sponsor || pd.sponsors[UI.podLiveSponsorIdx];
-    const spons = pd.sponsors.length ? ldPanel('pod:sponsor', { title: 'Sponsor reads', ico: 'dollar', count: `${pd.sponsors.filter(s => s.recorded).length}/${pd.sponsors.length}`, open: !!sponsor, hint: unread.length ? `${unread.length} to record` : 'all recorded',
-      tools: pd.sponsors.length > 1 && !sponsor ? [h('select', { class: 'inp sm', onchange: e => { UI.podLiveSponsorIdx = +e.target.value; draw(); } }, pd.sponsors.map((x, i) => h('option', { value: i, selected: x === sp }, `${x.name} (${x.slot})`)))] : null,
+          ldList('pod:q:' + g.id, qs.map((q, i) => [q, `${g.id}-${i}`]), ([q, k]) => h('label', { class: 'ld-check' + (vm.isAsked(k) ? ' done' : '') }, h('input', { type: 'checkbox', checked: vm.isAsked(k), onchange: e => vm.ask(k, e.target.checked) }), h('span', {}, q)), { limit: 6 }, draw)]; } }, draw) : null;
+    const sp = vm.panelSponsor;
+    const spons = sp ? ldPanel('pod:sponsor', { title: 'Sponsor reads', ico: 'dollar', count: `${pd.sponsors.filter(s => s.recorded).length}/${pd.sponsors.length}`, open: !!sponsor, hint: unread.length ? `${unread.length} to record` : 'all recorded',
+      tools: pd.sponsors.length > 1 && !sponsor ? [h('select', { class: 'inp sm', onchange: e => vm.pickSponsor(e.target.value) }, pd.sponsors.map((x, i) => h('option', { value: i, selected: x === sp }, `${x.name} (${x.slot})`)))] : null,
       body: () => [h('div', { class: 'ld-row' }, h('b', {}, sp.name), h('span', { class: 'pill' }, sp.slot), h('span', { class: 'grow' }), h('button', { class: 'btn sm ghost', onclick: () => { navigator.clipboard.writeText(sp.copy || ''); toast('Ad copy copied'); } }, icon('copy', 12), 'Copy')),
         sp.url || sp.code ? h('div', { class: 'ld-chips' }, sp.url ? h('span', { class: 'chip' }, sp.url) : null, sp.code ? h('span', { class: 'chip on' }, sp.code) : null) : null,
         h('div', { class: 'ld-read' }, sp.copy || sp.points || 'No copy yet.'),
-        h('label', { class: 'ld-check' }, h('input', { type: 'checkbox', checked: !!sp.recorded, onchange: e => { sp.recorded = e.target.checked; if (sp.recorded) mark(`Sponsor read: ${sp.name}`, 'cue'); flash(); } }), 'Recorded')] }, draw) : null;
-    const preflight = ldPanel('pod:preflight', { title: 'Pre-flight', ico: 'check', count: `${pre}/${POD_PREFLIGHT.length}`, tone: pre === POD_PREFLIGHT.length ? 'good' : begun ? 'warn' : '', open: !begun, hint: pre === POD_PREFLIGHT.length ? 'studio ready' : `${POD_PREFLIGHT.length - pre} to check`,
-      body: () => h('div', { class: 'ld-list' }, POD_PREFLIGHT.map(([k, l]) => h('label', { class: 'ld-check' + (L.preflight[k] ? ' done' : '') }, h('input', { type: 'checkbox', checked: !!L.preflight[k], onchange: e => { L.preflight[k] = e.target.checked; flash(); } }), h('span', {}, l)))) }, draw);
+        h('label', { class: 'ld-check' }, h('input', { type: 'checkbox', checked: !!sp.recorded, onchange: e => vm.setSponsorRecorded(sp.id, e.target.checked) }), 'Recorded')] }, draw) : null;
+    const PF = vm.preflightList, N = PF.length;
+    const preflight = ldPanel('pod:preflight', { title: 'Pre-flight', ico: 'check', count: `${pre}/${N}`, tone: pre === N ? 'good' : begun ? 'warn' : '', open: !begun, hint: pre === N ? 'studio ready' : `${N - pre} to check`,
+      body: () => h('div', { class: 'ld-list' }, PF.map(([k, l]) => h('label', { class: 'ld-check' + (L.preflight[k] ? ' done' : '') }, h('input', { type: 'checkbox', checked: !!L.preflight[k], onchange: e => vm.setPreflight(k, e.target.checked) }), h('span', {}, l)))) }, draw);
     const hotkeys = Device.form() === 'desktop' || !Device.touchOn() ? ldPanel('pod:keys', { title: 'Keyboard', ico: 'keyboard', open: false, hint: 'Space record · N next · R C B M markers',
-      body: () => h('div', { class: 'ld-keys' }, [['Space', 'Record / pause'], ['N', 'Next segment'], ['R', 'Retake marker'], ['C', 'Clip marker'], ['B', 'Bleep'], ['M', 'Custom marker'], ['T', 'Big display']].map(([k, l]) => h('span', {}, h('kbd', {}, k), l))) }, draw) : null;
+      body: () => h('div', { class: 'ld-keys' }, [['Space', 'Record / pause'], ['N', `Next ${W.toLowerCase()}`], ['R', 'Retake marker'], ['C', 'Highlight marker'], ['B', 'Bleep'], ['M', 'Custom marker'], ['T', 'Big display'],
+        ...(free ? [['P', 'Park a tangent']] : []), ...(video ? [['1–9', 'Switch camera'], ['I / O', 'Clip in / out'], ['S', 'Sync clap']] : [])].map(([k, l]) => h('span', {}, h('kbd', {}, k), l))) }, draw) : null;
 
-    cx.items = rundown.map((s, i) => ({ id: s.id, label: `${i + 1}. ${s.title}` }));
-    cx.groups = [{ key: 'hosts', label: 'Hosts', people: P.people.filter(p => p.type === 'cast' && p.name).map(p => ({ p, sub: p.role || p.character || 'Host' })) },
-      { key: 'guests', label: 'Guests', people: pd.guests.filter(x => x.name).map(x => ({ p: x, sub: x.title || 'Guest' })) },
-      { key: 'crew', label: 'Crew', people: P.people.filter(p => p.type === 'crew' && p.name).map(p => ({ p, sub: [p.role, p.dept].filter(Boolean).join(' · ') })) }];
-    cx.taskFilter = t => !t.due || t.due <= cx.date || t.status === 'blocked' || t.status === 'doing';
-
+    Object.assign(cx, { P, L, date: vm.date, items: vm.issueItems, groups: vm.groups, taskFilter: vm.taskFilter, itemWord: W, issueCats: vm.issueCats, quickIssues: vm.quickIssues });
     morph(wrap, [header, ldAlerts(alerts, draw), h('div', { class: 'ld-grid' },
       h('div', { class: 'ld-main' }, h('div', { class: 'ld-now-row' }, onAir, upNext), order, hotkeys),
-      h('div', { class: 'ld-side' }, meter, markers, ldProblems(cx), guestP, spons, preflight, ldCheckin(cx), board, ldTasks(cx), ldActivity(cx)))].filter(Boolean));
+      h('div', { class: 'ld-side' }, meter, cams, markers, ldProblems(cx), guestP, spons, preflight, ldCheckin(cx), board, ldTasks(cx), ldActivity(cx)))].filter(Boolean));
     vuUpdate();
+
+    /* talking points: tick them off as you go (no redraw) */
+    function renderBulletsChecklist(seg, bullets) {
+      if (!bullets.length) return h('p', { class: 'ld-empty' }, 'No talking points for this segment — add them in the rundown planner.');
+      return h('div', { class: 'ld-points' }, bullets.map((b, i) => { const key = `${seg.id}-${i}`, on = vm.isTicked(key);
+        return h('label', { class: 'ld-check big' + (on ? ' done' : '') }, h('input', { type: 'checkbox', checked: on, onchange: e => { vm.tick(key, e.target.checked); e.target.closest('label').classList.toggle('done', e.target.checked); } }), h('span', {}, b.replace(/^[•\-*]\s*/, ''))); }));
+    }
+    /* the script as a teleprompter: a window that scrolls itself, with the scrollbar hidden */
+    function renderScriptPrompter(P, pr) {
+      return h('div', { class: 'ld-prompter' },
+        h('div', { class: 'ld-row' }, h('button', { class: 'btn sm primary', onclick: () => vm.setPrompter({ auto: !pr.auto }) }, icon(pr.auto ? 'pause' : 'play', 13), pr.auto ? 'Stop scroll' : 'Auto-scroll'),
+          h('div', { class: 'seg sm' }, [[1, '1×'], [1.5, '1.5×'], [2, '2×']].map(([s, l]) => h('button', { class: pr.speed === s ? 'on' : '', onclick: () => vm.setPrompter({ speed: s }) }, l))), h('span', { class: 'grow' }),
+          h('button', { class: 'icon-btn', title: 'Smaller text', disabled: pr.size <= 12, onclick: () => vm.setPrompter({ size: pr.size - 2 }) }, 'A−'), h('button', { class: 'icon-btn', title: 'Larger text', disabled: pr.size >= 34, onclick: () => vm.setPrompter({ size: pr.size + 2 }) }, 'A+')),
+        h('div', { id: 'podPrompterBox', class: 'prompter-box', style: { fontSize: pr.size + 'px' } }, P.blocks.map(b => h('div', { class: 'pb-' + b.type }, b.text))));
+    }
+    function renderEmbeddedSponsorBox(sp) {
+      return h('div', { class: 'ld-inset sponsor' }, h('div', { class: 'ld-row' }, h('b', {}, `Sponsor read · ${sp.name}`), h('span', { class: 'pill' }, sp.slot), h('span', { class: 'grow' }), h('button', { class: 'btn sm ' + (sp.recorded ? '' : 'primary'), onclick: () => vm.setSponsorRecorded(sp.id, !sp.recorded) }, icon('check', 13), sp.recorded ? 'Recorded' : 'Mark recorded')),
+        sp.url || sp.code ? h('div', { class: 'ld-chips' }, sp.url ? h('span', { class: 'chip' }, sp.url) : null, sp.code ? h('span', { class: 'chip on' }, `Code ${sp.code}`) : null) : null,
+        h('div', { class: 'ld-read' }, sp.copy || sp.points || ''));
+    }
+    function renderEmbeddedGuestBox(g) {
+      return h('div', { class: 'ld-inset guest' }, h('div', { class: 'ld-row' }, h('b', {}, `Guest · ${g.name}`), g.title ? h('span', { class: 'ld-meta' }, g.title) : null, h('span', { class: 'grow' }), g.link ? h('a', { class: 'btn sm', href: /^https?:/.test(g.link) ? g.link : 'https://' + g.link, target: '_blank', rel: 'noreferrer' }, 'Join studio') : null),
+        g.nogo ? h('div', { class: 'ld-warn' }, `Off limits: ${g.nogo}`) : null);
+    }
   }
   function vuUpdate() {
     const fill = $('#podVuFill'), label = $('#podVuLabel'), clip = $('#podVuClip'); if (!fill || !label) return;
@@ -1617,67 +914,22 @@ function renderPodcastLive(root, P) {
   }
   /* the clocks tick without a redraw */
   const unsub = PodTimer.subscribe(() => {
-    const c = $('#podLiveClock'); if (c) c.textContent = fmtTimeSec(PodTimer.elapsedSec);
-    const cur = pd.rundown[PodTimer.activeSegIdx], st = $('#podSegTime'); if (st && cur) { const el = Math.max(0, PodTimer.elapsedSec - PodTimer.segStartSec), tg = Math.max(30, parseDurMin(cur.dur) * 60); st.textContent = `${fmtTimeSec(el)} / ${fmtTimeSec(tg)}`; st.classList.toggle('neg', el > tg); }
+    const c = $('#podLiveClock'); if (c) c.textContent = f(PodTimer.elapsedSec);
+    const st = $('#podSegTime'); if (st && vm.hasRundown) { const s = vm.state; st.textContent = s.free ? `${f(s.segEl)} · ~${f(s.segTarget)}` : `${f(s.segEl)} / ${f(s.segTarget)}`; st.classList.toggle('neg', !s.free && s.segEl > s.segTarget); }
   });
   const onKeyDown = e => {
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('body > .overlay')) return;
-    const k = e.key.toLowerCase(), act = { ' ': () => acts.record && acts.record(), n: () => acts.next && acts.next(), arrowright: () => acts.next && acts.next(),
-      r: () => { mark('Retake / line flub', 'retake'); toast('Retake marker'); flash(); }, c: () => { mark('Highlight / golden quote', 'quote'); toast('Clip marker'); flash(); },
-      b: () => { PodAudio.playBleep(0.7); PodTimer.addMarker('Bleep / censor point', 'bleep'); flash(); }, m: () => askMarker(), t: () => ldTV(wrap) }[k];
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('body > .overlay') || !vm.hasRundown) return;
+    const k = e.key.toLowerCase(), act = { ' ': () => vm.record(), n: nextSeg, arrowright: nextSeg,
+      r: () => { vm.mark('Retake / line flub', 'retake'); toast('Retake marker'); }, c: () => { vm.mark('Highlight / golden quote', 'quote'); toast('Clip marker'); },
+      b: () => { PodAudio.playBleep(0.7); vm.logMarker('Bleep / censor point', 'bleep'); }, m: () => askMarker(), t: () => ldTV(wrap),
+      ...(vm.isFree ? { p: askPark } : {}),
+      ...(vm.isVideo ? { i: () => { vm.mark('Clip in', 'clipIn'); toast('Clip in'); }, o: () => { vm.mark('Clip out', 'clipOut'); toast('Clip out'); }, s: () => { vm.sync(); toast('Sync clap marked'); } } : {}) }[k]
+      || (vm.isVideo && /^[1-9]$/.test(k) && vm.cameras[+k - 1] ? () => vm.camSwitch(vm.cameras[+k - 1].id) : null);
     if (act) { e.preventDefault(); act(); }
   };
   window.addEventListener('keydown', onKeyDown);
   const scroll = setInterval(() => { if (PodTimer.autoScroll && PodTimer.scriptPrompter) { const box = $('#podPrompterBox'); if (box) box.scrollTop += PodTimer.scrollSpeed || 1; } }, 40);
-  draw();
-  const stop = ldTicker(wrap, { redraw: () => PodTimer.running && draw(), every: 5000 });
-  return () => { stop(); clearInterval(scroll); unsub(); PodMicMeter.stop(); window.removeEventListener('keydown', onKeyDown); };
+  const unbind = bindView(vm, draw);
+  const stop = ldTicker(wrap, { redraw: () => PodTimer.running && vm.refresh(), every: 5000 });
+  return () => { stop(); clearInterval(scroll); unsub(); PodMicMeter.stop(); window.removeEventListener('keydown', onKeyDown); unbind(); };
 }
-
-/* talking points: tick them off as you go */
-function renderBulletsChecklist(seg, bullets) {
-  if (!bullets.length) return h('p', { class: 'ld-empty' }, 'No talking points for this segment — add them in the rundown planner.');
-  return h('div', { class: 'ld-points' }, bullets.map((b, i) => { const key = `${seg.id}-${i}`, on = PodTimer.checkedBullets.has(key);
-    return h('label', { class: 'ld-check big' + (on ? ' done' : '') }, h('input', { type: 'checkbox', checked: on, onchange: e => { e.target.checked ? PodTimer.checkedBullets.add(key) : PodTimer.checkedBullets.delete(key); e.target.closest('label').classList.toggle('done', e.target.checked); } }), h('span', {}, b.replace(/^[•\-*]\s*/, ''))); }));
-}
-/* the script as a teleprompter: a window that scrolls itself, with the scrollbar hidden */
-function renderScriptPrompter(P, redraw) {
-  const fs = PodTimer.prompterFontSize || 18, auto = !!PodTimer.autoScroll, spd = PodTimer.scrollSpeed || 1;
-  return h('div', { class: 'ld-prompter' },
-    h('div', { class: 'ld-row' }, h('button', { class: 'btn sm primary', onclick: () => { PodTimer.autoScroll = !auto; redraw(); } }, icon(auto ? 'pause' : 'play', 13), auto ? 'Stop scroll' : 'Auto-scroll'),
-      h('div', { class: 'seg sm' }, [[1, '1×'], [1.5, '1.5×'], [2, '2×']].map(([s, l]) => h('button', { class: spd === s ? 'on' : '', onclick: () => { PodTimer.scrollSpeed = s; redraw(); } }, l))), h('span', { class: 'grow' }),
-      h('button', { class: 'icon-btn', title: 'Smaller text', disabled: fs <= 12, onclick: () => { PodTimer.prompterFontSize = Math.max(12, fs - 2); redraw(); } }, 'A−'), h('button', { class: 'icon-btn', title: 'Larger text', disabled: fs >= 34, onclick: () => { PodTimer.prompterFontSize = Math.min(34, fs + 2); redraw(); } }, 'A+')),
-    h('div', { id: 'podPrompterBox', class: 'prompter-box', style: { fontSize: fs + 'px' } }, P.blocks.map(b => h('div', { class: 'pb-' + b.type }, b.text))));
-}
-function renderEmbeddedSponsorBox(sp, flash) {
-  return h('div', { class: 'ld-inset sponsor' }, h('div', { class: 'ld-row' }, h('b', {}, `Sponsor read · ${sp.name}`), h('span', { class: 'pill' }, sp.slot), h('span', { class: 'grow' }), h('button', { class: 'btn sm ' + (sp.recorded ? '' : 'primary'), onclick: () => { sp.recorded = !sp.recorded; flash(); } }, icon('check', 13), sp.recorded ? 'Recorded' : 'Mark recorded')),
-    sp.url || sp.code ? h('div', { class: 'ld-chips' }, sp.url ? h('span', { class: 'chip' }, sp.url) : null, sp.code ? h('span', { class: 'chip on' }, `Code ${sp.code}`) : null) : null,
-    h('div', { class: 'ld-read' }, sp.copy || sp.points || ''));
-}
-function renderEmbeddedGuestBox(g) {
-  return h('div', { class: 'ld-inset guest' }, h('div', { class: 'ld-row' }, h('b', {}, `Guest · ${g.name}`), g.title ? h('span', { class: 'ld-meta' }, g.title) : null, h('span', { class: 'grow' }), g.link ? h('a', { class: 'btn sm', href: /^https?:/.test(g.link) ? g.link : 'https://' + g.link, target: '_blank', rel: 'noreferrer' }, 'Join studio') : null),
-    g.nogo ? h('div', { class: 'ld-warn' }, `Off limits: ${g.nogo}`) : null);
-}
-
-/* ---------------------------------------------------------------
-   Session wrap: the editor's hand-off sheet, also saved to the daily report
-   --------------------------------------------------------------- */
-function openSessionWrapModal(P, pd, rundown, L) {
-  if (!P.days.length) P.days.push(Object.assign(newDay(P, todayISO()), { title: 'Episode recording' }));
-  const d = P.days.find(x => x.id === UI.liveDay) || P.days.find(x => x.date === todayISO()) || P.days[0]; UI.liveDay = d.id;
-  const R = dprOf(P, d), start = PodTimer.startTime || (Date.now() - PodTimer.elapsedSec * 1000), rec = PodTimer.elapsedSec;
-  R.t.crew = R.t.crew || fromMin(Math.round(msMin(start))); R.t.wrap = fromMin(Math.round(msMin(Date.now())));
-  const covered = rundown.filter(s => s.status === 'Covered').length, cut = rundown.filter(s => s.status === 'Cut').length, marks = [...PodTimer.markers].reverse(), issues = L.issues;
-  const lines = [`EPISODE RECORDING — HAND-OFF`, `Show: ${P.title}`, `Episode: ${pd.epNumber || '1'}${pd.season ? ' (season ' + pd.season + ')' : ''}`, `Date: ${todayISO()}`, `Recorded: ${fmtTimeSec(rec)}`, `Segments covered: ${covered} of ${rundown.length}${cut ? ` (${cut} cut)` : ''}`, '',
-    'RUNNING ORDER', ...rundown.map((s, i) => `${i + 1}. [${s.status.toUpperCase()}] ${s.title} (${s.dur} min planned)`), '',
-    ...(marks.length ? ['EDITOR MARKERS', ...marks.map(m => `[${fmtTimeSec(m.time)}] ${m.kind && m.kind !== 'marker' ? m.kind.toUpperCase() + ': ' : ''}${m.label}`), ''] : []),
-    ...(pd.sponsors.length ? ['SPONSOR READS', ...pd.sponsors.map(s => `[${s.recorded ? 'RECORDED' : 'NOT RECORDED'}] ${s.name} (${s.slot})${s.code ? ' — code ' + s.code : ''}`), ''] : []),
-    ...(issues.length ? ['PROBLEMS', ...issues.map(i => `[${i.tc != null ? fmtTimeSec(i.tc) : clockTxt(msMin(i.at))}] [${i.sev}] ${i.cat}: ${i.title}${i.status === 'Resolved' ? ' (resolved)' : ''}`)] : [])];
-  const text = lines.join('\n');
-  R.notes = [R.notes, text].filter(Boolean).join('\n\n'); if (issues.length) R.incidents = issues.map(i => `[${i.sev}] ${i.cat}: ${i.title}`).join('\n'); R.media = `Audio · ${fmtTimeSec(rec)} recorded`; Store.touch();
-  const stat = (l, v) => h('div', { class: 'ld-tile' }, h('span', { class: 'ld-l' }, l), h('b', { class: 'ld-v' }, v));
-  modal({ title: 'Session wrapped', wide: true, body: h('div', {}, h('div', { class: 'ld-head' }, stat('Recorded', fmtTimeSec(rec)), stat('Segments covered', `${covered}/${rundown.length}`), stat('Markers', String(marks.length)), stat('Problems', String(issues.length))),
-    h('label', { class: 'lbl' }, 'Hand-off sheet for the editor — also saved in the daily report'), h('textarea', { class: 'inp mono', rows: 12, readOnly: true, value: text })),
-    buttons: [{ label: 'Reports', onClick: () => { location.hash = `#/p/${P.id}/reports`; } }, { label: 'Close' }, { label: 'Copy for the editor', primary: true, onClick: () => { navigator.clipboard.writeText(text); toast('Hand-off sheet copied'); return false; } }] });
-}
-

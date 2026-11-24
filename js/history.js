@@ -64,7 +64,7 @@ function purgeOrphans(P) {
   P.tags = P.tags.filter(t => ok(t.sceneId)); P.shots = P.shots.filter(t => ok(t.sceneId));
   const shotIds = new Set(P.shots.map(s => s.id));
   P.boards = P.boards.filter(t => ok(t.sceneId)); P.boards.forEach(b => { if (b.shotId && !shotIds.has(b.shotId)) b.shotId = ''; });
-  P.days.forEach(d => d.sceneIds = d.sceneIds.filter(ok));
+  P.days.forEach(d => { d.sceneIds = d.sceneIds.filter(ok); if (d.parts) Object.keys(d.parts).forEach(k => { if (!ok(k)) delete d.parts[k]; }); });
   P.props.concat(P.wardrobe).forEach(x => x.sceneIds = x.sceneIds.filter(ok)); P.tasks.forEach(t => { if (!ok(t.sceneId)) t.sceneId = ''; });
   Object.keys(P.sceneMeta).forEach(k => { if (!ok(k)) delete P.sceneMeta[k]; });
   P.cues.forEach(c => { if (!ok(c.sceneId)) c.sceneId = ''; });

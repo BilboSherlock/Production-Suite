@@ -130,7 +130,8 @@ function wordDiff(a, b) {
 const sceneEst = (P, s) => { const m = P.sceneMeta[s.id]; return (m && +m.est) ? +m.est : Math.round(s.eighths / 8 * (+P.settings.minsPerPage || 60)); };
 const fmtMin = m => { m = Math.round(m); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
 function dayPlan(P, d, scenes) {
-  const ls = d.sceneIds.map(id => scenes.find(s => s.id === id)).filter(Boolean), mins = sum(ls, s => sceneEst(P, s));
+  /* a part of a split scene takes its share of the scene's time */
+  const ls = d.sceneIds.map(id => scenes.find(s => s.id === id)).filter(Boolean), mins = sum(ls, s => sceneEst(P, s) * ScheduleModel.share(P, d, s).frac);
   let moves = 0; ls.forEach((s, i) => { if (i && (locName(P, s) || '').toUpperCase() !== (locName(P, ls[i - 1]) || '').toUpperCase()) moves++; });
   const cap = (+P.settings.dayHours || 10) * 60; return { ls, mins, moves, cap, over: mins + moves * 30 > cap };
 }

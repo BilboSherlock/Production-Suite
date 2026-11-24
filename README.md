@@ -60,6 +60,7 @@ Everything is saved privately in your browser (IndexedDB). Use **Backup** (or **
 
 **Production**
 - **Shoot-time estimates** per scene, **company moves**, and a day-length warning on the stripboard.
+- **Split scenes over several days** — on the stripboard, a strip's ⋮ menu → *Split across days…* cuts a scene into parts by page (in eighths), each with an optional note ("wide coverage", "close-ups"). Every part is its own strip (marked *pt 1/2*, dashed edge) that you drag to its own day; a day holds one part of each scene. Page counts, time estimates, call sheets, the daily production report and the live dashboard count only that day's part, while cast, props and Day out of Days treat the scene as working on every one of its days. Change the split or *Merge parts back into one* from the same menu.
 - **Sides** — print the script pages for any shoot day from the Schedule or call sheet.
 - **Script supervisor** — a take log per shot (circle / NG / alt, camera and sound rolls, timecode, notes), camera report, sound report and continuity log. Circling a take marks the shot done and feeds the daily report.
 - **Budget** — account codes, above / below the line, fringes, contingency, a **top sheet** and **actuals against budget**.
@@ -70,10 +71,13 @@ Everything is saved privately in your browser (IndexedDB). Use **Backup** (or **
 - **Series & episodes** — *Series bible* (Project section): make any project an episode, then **New episode** (optionally carrying over cast, casting roles and locations). The bible — premise, tone, rules, world, writers’ notes, characters with arcs, season arcs — is shared by every episode, plus an **episode guide** (S01E03, loglines, pages) you can print. Episode number appears on the title page and home screen.
 - **Lined script** — Script supervisor → *Lined script*: pick a slate, drag down the script’s right margin to draw its coverage; solid = on camera, dashed = off camera, labels show the slate and circled takes. Lines stay attached to the script text as you edit, move across page breaks, and print.
 - **Podcast & Audio suite** (New project → *Podcast & Audio*, or the sample on the home screen)
-  - **Unscripted episode rundown** — timed segments with running cumulative clock, target durations, talking points, attached audio drops and live recording pacing timer (ahead / behind tracking). Preset templates for interviews (45m), co-hosted panel news (60m) and solo deep dives (25m). CSV export and quick summary copy.
+  - **Show format** — *Structured rundown* (timed segments in order), *Freeflow conversation* (topics to get to in any order, each marked Must cover / Nice to have / If there's time, with a target episode length) or *Scripted* (the script carries the words; the rundown is the outline). Recorded as *Audio only* or *Filmed (video + audio)*.
+  - **Episode rundown** — timed segments with running cumulative clock, target durations, talking points, attached audio drops and a recording clock that shares its session with the live desk. Freeflow shows list topics by priority and warn when the must-covers won't fit the target. Templates: interview (45m), co-hosted panel (60m), solo deep dive (25m), freeflow conversation (60m), freeflow roundtable (90m) and filmed multi-cam interview (45m). CSV export and quick summary copy.
+  - **Filmed podcasts** — a *Cameras & set* tab (cameras with shot, operator, lens and card length; aspect ratio, resolution, ISO recording, social-clip format; set, lighting, wardrobe and thumbnail notes), camera and on-screen graphics notes on every segment, on-camera notes for guests, on-screen notes for sponsor reads, a camera & lighting starter kit, and video pre-flight checks on the live desk.
+  - **Live recording desk** — record / pause, segment pacing (or, for freeflow, time left against the target and the must-cover topics still to come, tap any topic in any order, park a tangent for later), editor markers, pre-flight, problems and check-in. Filmed shows add camera switching (keys 1–9), clip in / out and sync-clap markers and card-full warnings. Wrapping writes an editor's hand-off (chapters from the recording, clips for social, cameras, sync point) into the daily report.
   - **Guest prep** — guest profiles with pronouns, remote recording links (Riverside, Squadcast, Zoom), timezone, discussion angles / question checklists, sensitive "no-go" topics and release status.
   - **Sponsor reads & ad copy** — pre-roll, mid-roll, post-roll tracking with promo codes, vanity URLs, mandatory talking points, scripted copy and one-click copy.
-  - **Show notes & chapter generator** — auto-compiles YouTube / Spotify chapter timestamps from the rundown, guest links, sponsor codes and summary into ready-to-publish notes.
+  - **Show notes & chapter generator** — compiles YouTube / Spotify chapter timestamps (from the actual recording when there is one, else the rundown), a clip list for social, guest links, sponsor codes, video link and tags into ready-to-publish notes.
   - **Scripted audio drama editor** — Scene/Segment, Speaker, Delivery/Mic direction, Dialogue, Sound Effects (SFX), Music cues, Audio clips/tape and Sponsor reads with typing auto-triggers (`SFX:`, `MUSIC:`, `CLIP:`, `SPONSOR:`). Exports to Fountain, plain text and PDF with speech-speed runtime calculation (~140 WPM).
 
 **Contacts & settings**
@@ -162,8 +166,28 @@ Everything is saved privately in your browser (IndexedDB). Use **Backup** (or **
 ## Files
 
 `index.html` · `sw.js` (offline) · `manifest.webmanifest` · `serve.py` (local server + live relay) · `css/app.css` ·
-`js/core.js` (helpers, storage, formats, device) · `js/dnd.js` (drag & drop for every list, mouse and touch) · `js/layout.js` (rich text, pagination, print) · `js/history.js` (undo, revisions, numbering) · `js/elements.js` · `js/integrity.js` · `js/data.js` ·
+`js/core.js` (helpers, storage, formats, device) · `js/mvvm.js` (architecture foundation, see below) · `js/dnd.js` (drag & drop for every list, mouse and touch) · `js/layout.js` (rich text, pagination, print) · `js/history.js` (undo, revisions, numbering) · `js/elements.js` · `js/integrity.js` · `js/data.js` ·
 `js/script.js` · `js/cards.js` · `js/breakdown.js` · `js/tags.js` · `js/shots.js` · `js/sbrender.js` · `js/sbstudio.js` · `js/boards.js` · `js/lookbook.js` · `js/items.js` (props & wardrobe) · `js/pitch.js` ·
-`js/schedule.js` · `js/people.js` · `js/profiles.js` · `js/casting.js` · `js/contacts.js` · `js/fin.js` · `js/budget.js` · `js/budget2.js` · `js/tasks.js` · `js/reports.js` · `js/dpr.js` · `js/overview.js` · `js/series.js` ·
-`js/stage.js` · `js/takes.js` · `js/lined.js` · `js/livedesk.js` · `js/live.js` · `js/photo.js` · `js/photo2.js` · `js/podcast.js` · `js/pdfimport.js` · `js/search.js` · `js/settings.js` · `js/region.js` · `js/sync.js` ·
+`js/schedule.js` + `js/models/schedule.model.js` + `js/viewmodels/schedule.vm.js` + `js/models/callsheet.model.js` + `js/viewmodels/callsheet.vm.js` · `js/people.js` · `js/profiles.js` · `js/casting.js` · `js/contacts.js` · `js/fin.js` · `js/budget.js` · `js/budget2.js` · `js/tasks.js` + `js/models/tasks.model.js` + `js/viewmodels/tasks.vm.js` · `js/reports.js` + `js/models/reports.model.js` + `js/viewmodels/reports.vm.js` · `js/dpr.js` + `js/models/dpr.model.js` + `js/viewmodels/dpr.vm.js` · `js/overview.js` · `js/series.js` ·
+`js/stage.js` · `js/takes.js` · `js/lined.js` · `js/livedesk.js` · `js/live.js` + `js/models/live.model.js` + `js/viewmodels/live.vm.js` · `js/photo.js` · `js/photo2.js` · `js/podcast.js` + `js/models/podcast.model.js` + `js/viewmodels/podcast.vm.js` + `js/models/podlive.model.js` + `js/viewmodels/podlive.vm.js` · `js/pdfimport.js` · `js/search.js` · `js/settings.js` · `js/region.js` · `js/sync.js` ·
 `js/crypto.js` · `js/diff.js` · `js/collabcore.js` · `js/collabnet.js` · `js/collab.js` · `js/app.js` (router, home, boot)
+`tests/` (automated tests)
+
+## Architecture (MVVM)
+
+Sections are moving, one at a time, to three layers. **Tasks**, the **Schedule** (stripboard + calendar), **Call sheets**, **Reports** (all report tabs), **Daily production reports**, the **Live desk** (film, stage, AV and photo) and the whole **Podcast suite** (planner tabs and the recorder) are done; every other section still works as before until it moves.
+
+| Layer | Where | Does | Never |
+|---|---|---|---|
+| **Model** | `js/models/<feature>.model.js` | The project data and the rules that change or query it (pure functions on the project) | Touch the page, `Store` or UI state |
+| **View model** | `js/viewmodels/<feature>.vm.js` (extends `ViewModel`) | One per screen: UI state (filters, mode), what to show (getters) and what the user can do (commands). Commands change data only through `commit()`, which saves, records undo and syncs live sessions, then redraws | Touch the page |
+| **View** | `js/<feature>.js` → `Views.<feature>(root)` | Builds the page from the view model with `bindView(vm, draw)` and calls its commands | Edit project data directly |
+
+Typing into a field calls a command with `{ quiet: true }` (saved, no redraw, so the field keeps focus). The rules are written out at the top of `js/mvvm.js`.
+
+**Moving a section over:** pull its data rules into a model, its state and actions into a view model, write tests for both, then make the view call the view model. Add the new files to `index.html` (before the view) and `tests/index.html`, and bump `VERSION` in `sw.js`.
+
+**Tests** cover the model and view-model layers (no browser needed):
+
+- `node tests/run.js`
+- or, with the server running, open `http://localhost:5173/tests/index.html`
