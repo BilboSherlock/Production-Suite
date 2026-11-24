@@ -53,10 +53,13 @@ function openProfile(p, onClose, opts = {}) {
     p.photo ? h('button', { class: 'btn sm', style: { marginTop: '6px', width: '100%' }, onclick: () => { p.photo = ''; Store.touch(); drawPhoto(); } }, 'Remove photo') : null); };
   drawPhoto();
   const docs = h('div', { class: 'pf-sec' }, h('h4', {}, 'Paperwork'), h('div', { class: 'docs' }, DOC_LIST.map(([k, l]) => h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: !!p.docs[k], onchange: e => { p.docs[k] = e.target.checked; Store.touch(); } }), l))));
-  const secs = profileSections(p, opts.contact).map(([title, fields]) => h('div', { class: 'pf-sec' }, h('h4', {}, title), h('div', { class: 'pf-grid' }, fields.map(([k, l, o]) => field(k, l, o)))));
+  /* the field sections follow cast / crew; they are rebuilt in place when that changes */
+  const secs = h('div', { style: { display: 'contents' } });
+  const drawSecs = () => secs.replaceChildren(...profileSections(p, opts.contact).map(([title, fields]) => h('div', { class: 'pf-sec' }, h('h4', {}, title), h('div', { class: 'pf-grid' }, fields.map(([k, l, o]) => field(k, l, o))))));
+  drawSecs();
   const body = h('div', { class: 'pf' }, h('div', { class: 'pf-side' }, photoBox, h('div', { style: { marginTop: '12px', textAlign: 'center' } }, h('div', { class: 'pf-name', style: { fontFamily: 'var(--head)', fontWeight: 800, fontSize: '17px' } }, p.name || 'Unnamed'), h('div', { class: 'small muted' }, p.type === 'cast' ? (p.character || 'Cast') : [p.role, p.dept].filter(Boolean).join(' · ') || 'Crew')),
     h('div', { style: { marginTop: '14px' } }, sceneInfo(), wardrobeInfo()), opts.contact ? null : docs),
-    h('div', { class: 'pf-main' }, opts.contact ? contactRolesSection(p, () => { box.close && box.close(); setTimeout(() => openProfile(p, onClose, opts), 0); }) : null, secs, h('div', { class: 'pf-sec' }, h('h4', {}, 'Notes'), h('textarea', { class: 'inp', rows: 4, value: p.notes || '', placeholder: 'Anything else the production should know…', oninput: e => { p.notes = e.target.value; Store.touch(); } })),
+    h('div', { class: 'pf-main' }, opts.contact ? contactRolesSection(p, drawSecs) : null, secs, h('div', { class: 'pf-sec' }, h('h4', {}, 'Notes'), h('textarea', { class: 'inp', rows: 4, value: p.notes || '', placeholder: 'Anything else the production should know…', oninput: e => { p.notes = e.target.value; Store.touch(); } })),
       h('datalist', { id: 'dl-union' }, UNIONS.filter(Boolean).map(u => h('option', { value: u })))));
   const box = modal({ title: opts.contact ? 'Contact profile' : p.type === 'cast' ? 'Cast profile' : 'Crew profile', wide: true, body, onClose,
     buttons: [opts.contact ? null : { label: 'Save to contacts', onClick: async () => { const r = await saveToContacts([p]); Store.touch(); toast(r.added ? 'Added to your contacts' : 'Contact updated'); return false; } }, p.type === 'cast' && p.character && !opts.contact ? { label: 'Rename character…', onClick: () => { setTimeout(() => openRenameCharacter(P, p.character, onClose), 0); } } : null, opts.contact ? null : { label: 'Print profile', onClick: () => { printProfile(p); return false; } }, { label: 'Done', primary: true }].filter(Boolean) });
@@ -107,24 +110,23 @@ Views.people = function (root) {
     Store.touch(); fill(); toast(n ? `Added ${n} character${n > 1 ? 's' : ''}` : 'All characters are already listed', !n);
   }
   async function remove(p) { if ((!p.name && !p.character) || await confirmBox(`Remove ${p.name || p.character}?`, 'Remove')) { P.people = P.people.filter(x => x !== p); Store.touch(); fill(); } }
-  function fill() {
-    body.innerHTML = '';
+  const fill = () => morph(body, build());   // redraw in place: no flicker, typing and scroll are kept
+  function build() {
     const rows = list().filter(p => !q || JSON.stringify(Object.values(p)).toLowerCase().includes(q));
-    if (!rows.length) { body.append(h('div', { class: 'empty' }, h('p', {}, tab === 'cast' ? 'No cast yet. Add actors, or import the characters from your script.' : 'No crew yet. Add your team to include them on call sheets.'))); return; }
+    if (!rows.length) return h('div', { class: 'empty' }, h('p', {}, tab === 'cast' ? 'No cast yet. Add actors, or import the characters from your script.' : 'No crew yet. Add your team to include them on call sheets.'));
     if (UI.peopleView === 'cards') {
-      body.append(h('div', { class: 'people-grid' }, rows.map(p => h('div', { class: 'pcardp', tabindex: 0, onclick: () => openProfile(p, fill), onkeydown: e => { if (e.key === 'Enter') openProfile(p, fill); } },
+      return h('div', { class: 'people-grid' }, rows.map(p => h('div', { class: 'pcardp', 'data-key': p.id, tabindex: 0, onclick: () => openProfile(p, fill), onkeydown: e => { if (e.key === 'Enter') openProfile(p, fill); } },
         h('div', { class: 'pic', style: p.photo ? { backgroundImage: `url(${p.photo})` } : {} }, p.photo ? '' : initialsOf(p.name || p.character)),
         h('div', { class: 'pbody' }, h('b', {}, p.name || h('i', { class: 'muted' }, 'Unnamed')), h('div', { class: 'small muted' }, tab === 'cast' ? (p.character || 'Cast') : [p.role, p.dept].filter(Boolean).join(' · ') || 'Crew'),
           p.email ? h('div', { class: 'small', style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, p.email) : null, p.phone ? h('div', { class: 'small' }, p.phone) : null,
-          h('div', { class: 'row', style: { marginTop: '6px' } }, h('div', { class: 'progress', title: 'Paperwork complete' }, h('i', { style: { width: docsDone(p) / DOC_LIST.length * 100 + '%' } })), h('span', { class: 'small muted' }, `${docsDone(p)}/${DOC_LIST.length}`)))))));
-      return;
+          h('div', { class: 'row', style: { marginTop: '6px' } }, h('div', { class: 'progress', title: 'Paperwork complete' }, h('i', { style: { width: docsDone(p) / DOC_LIST.length * 100 + '%' } })), h('span', { class: 'small muted' }, `${docsDone(p)}/${DOC_LIST.length}`))))));
     }
-    body.append(h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, h('th', {}, ''), COLS[tab].map(c => h('th', {}, c[1])), h('th', {}, 'Paperwork'), h('th', {}, ''))),
-      h('tbody', {}, rows.map(p => h('tr', {}, h('td', { style: { width: '54px', cursor: 'pointer' }, onclick: () => openProfile(p, fill) }, avatar(p, 34)),
+    return h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, h('th', {}, ''), COLS[tab].map(c => h('th', {}, c[1])), h('th', {}, 'Paperwork'), h('th', {}, ''))),
+      h('tbody', {}, rows.map(p => h('tr', { 'data-key': p.id }, h('td', { style: { width: '54px', cursor: 'pointer' }, onclick: () => openProfile(p, fill) }, avatar(p, 34)),
         COLS[tab].map(([k, , ph]) => h('td', {}, h('input', { class: 'cell', value: p[k] || '', placeholder: ph, list: k === 'dept' ? 'dl-dept' : null,
           oninput: e => { p[k] = k === 'character' ? e.target.value.toUpperCase() : e.target.value; if (k === 'character') e.target.value = p[k]; Store.touch(); } }))),
         h('td', { style: { width: '110px' } }, h('div', { class: 'row', style: { gap: '6px', padding: '8px 4px' } }, h('div', { class: 'progress', style: { minWidth: '50px' } }, h('i', { style: { width: docsDone(p) / DOC_LIST.length * 100 + '%' } })), h('span', { class: 'small muted' }, `${docsDone(p)}/${DOC_LIST.length}`))),
-        h('td', { style: { width: '84px', whiteSpace: 'nowrap' } }, ibtn('user', 'Open profile', () => openProfile(p, fill)), ibtn('trash', 'Remove', () => remove(p), 'danger')))))));
+        h('td', { style: { width: '84px', whiteSpace: 'nowrap' } }, ibtn('user', 'Open profile', () => openProfile(p, fill)), ibtn('trash', 'Remove', () => remove(p), 'danger'))))));
   }
   fill();
   if (UI.openPerson) { const pp = P.people.find(x => x.id === UI.openPerson); UI.openPerson = null; if (pp) openProfile(pp, fill); }

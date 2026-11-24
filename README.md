@@ -5,7 +5,7 @@ Everything is saved privately in your browser (IndexedDB). Use **Backup** (or **
 
 ## Run it
 
-- Double-click `Start StudioBindahh.bat` (needs Python), **or** run `python serve.py` and open <http://localhost:5173>, **or** open `index.html`.
+- Double-click `Start StudioBindahh.bat` (needs Python), **or** run `python serve.py` and open <http://localhost:5173>, **or** open `index.html`. Starting it again while it is already running just opens the running copy; if port 5173 belongs to another program it picks the next free port and says so. The console also prints the address to open on a tablet on the same Wi-Fi.
 - **Always open it the same way.** Browsers keep `file://` and `localhost` data separate. "Back up all" + Import moves projects between them.
 
 ## What's inside
@@ -139,6 +139,19 @@ Everything is saved privately in your browser (IndexedDB). Use **Backup** (or **
 - **Tab folding** (Settings, or *Customize tabs* inside a project; global or per project): related sections share one menu entry with sub-tabs across the top — **Visualize** (storyboard, shot list, lookbook, blocking), **Breakdown** (breakdown, props & wardrobe, locations, gear), **Schedule**, **People**, **On set**, and more. Choose Off, Balanced or Compact, or fold hubs one by one.
 - **Adapts to the format** — sections that make no sense for a format are hidden (no photo tabs in a film, no shot list or script supervisor on a stage play), and groups change with the format: on a stage play, Blocking & cues joins *Rehearsal & show*, Visualize becomes *Design*; on a photo shoot, it is *Look & lighting*, *Shoot day* and *Talent & crew*.
 
+## On a tablet (tuned for the Lenovo Idea Tab Plus and other Android tablets)
+
+- **Install it** — open the app in Chrome and choose *Add to home screen / Install app*: it runs full-screen, works offline, and the status bar matches the light / dark theme. Installing needs HTTPS (a hosted copy) or `localhost`; a plain `http://192.168…` address from `serve.py` still works in the browser, just without install / offline.
+- **Device profile** — Settings → Device picks Automatic, Desktop or Lenovo Idea Tab Plus 12.1″ (2560 × 1600, laid out at 1280 × 800): each tunes the layout, touch targets and the live desk for that screen in landscape and portrait.
+- **Live desk** — one dashboard for every suite (film, stage, photo shoot, podcast): clock and status tiles, alerts, now / next with everything linked to the scene (shots, cast check-in, needs, boards), a running order that fits the screen, and shared Problems, Check-in, Tasks and Activity panels. Nothing scrolls: panels fold and lists open with "Show all".
+- **Touch layout** — switches on automatically for touch screens (or force it in Settings): bigger targets, an icon rail you can expand with the arrow at its foot, and a one-row top bar in portrait and split-screen.
+- **Drag & drop by touch or pen** — press and hold a corkboard card's bottom strip, a stripboard strip, a task card, a storyboard frame or an outline scene, then drag. Lists scroll on their own near the edges; a quick swipe still scrolls.
+- **Writing bar** — while the on-screen keyboard is up, a bar above it changes the element type, formats, adds notes and undoes. With the keyboard cover attached it stays out of the way and Tab / Ctrl shortcuts work as on a computer. The line you are typing is always kept above the keyboard.
+- **Pen** — the storyboard frame studio uses pen pressure, ignores your palm while the pen is down, and erases with the pen's side button.
+- **Screen stays on** — during the Live dashboard, a pitch-deck or storyboard presentation, and a table read.
+- **Presenting** — swipe or tap the left / right of a slide; the floating bar has previous / next / Exit (no keyboard needed). The back gesture closes any open dialog or presentation.
+- **Speed** — the script editor sizes its lines natively (a 90-page script opens about 6× faster than before), unchanged sections are not re-saved when you switch tabs, and `serve.py` sends the app compressed with revalidation, so tablets on Wi-Fi load ~4× less data and the installed app opens from its cache when the network is slow.
+
 ## Writing notes
 
 - Formatting uses Fountain-style markers: `**bold**`, `*italic*`, `_underline_`, `***bold italic***`.
@@ -148,4 +161,9 @@ Everything is saved privately in your browser (IndexedDB). Use **Backup** (or **
 
 ## Files
 
-`index.html` · `css/app.css` · `js/core.js` (storage, formats) · `js/layout.js` (rich text, pagination, print) · `js/history.js` (undo, revisions, numbering, safety) · `js/script.js` · `js/cards.js` · `js/breakdown.js` · `js/shots.js` · `js/boards.js` · `js/schedule.js` · `js/people.js` · `js/profiles.js` · `js/pdfimport.js` · `js/props.js` · `js/reports.js` · `js/stage.js` · `js/casting.js` · `js/tasks.js` · `js/dpr.js` · `js/sbrender.js` · `js/sbstudio.js` · `js/crypto.js` · `js/diff.js` · `js/collabcore.js` · `js/collabnet.js` · `js/collab.js` · `js/tags.js` · `js/region.js` · `js/live.js` · `js/fin.js` · `js/budget.js` · `js/budget2.js` · `js/series.js` · `js/lined.js` · `js/settings.js` · `js/contacts.js` · `js/photo.js` · `js/photo2.js` · `js/podcast.js` · `js/pitch.js` · `js/sync.js` · `js/app.js`
+`index.html` · `sw.js` (offline) · `manifest.webmanifest` · `serve.py` (local server + live relay) · `css/app.css` ·
+`js/core.js` (helpers, storage, formats, device) · `js/dnd.js` (drag & drop for every list, mouse and touch) · `js/layout.js` (rich text, pagination, print) · `js/history.js` (undo, revisions, numbering) · `js/elements.js` · `js/integrity.js` · `js/data.js` ·
+`js/script.js` · `js/cards.js` · `js/breakdown.js` · `js/tags.js` · `js/shots.js` · `js/sbrender.js` · `js/sbstudio.js` · `js/boards.js` · `js/lookbook.js` · `js/items.js` (props & wardrobe) · `js/pitch.js` ·
+`js/schedule.js` · `js/people.js` · `js/profiles.js` · `js/casting.js` · `js/contacts.js` · `js/fin.js` · `js/budget.js` · `js/budget2.js` · `js/tasks.js` · `js/reports.js` · `js/dpr.js` · `js/overview.js` · `js/series.js` ·
+`js/stage.js` · `js/takes.js` · `js/lined.js` · `js/livedesk.js` · `js/live.js` · `js/photo.js` · `js/photo2.js` · `js/podcast.js` · `js/pdfimport.js` · `js/search.js` · `js/settings.js` · `js/region.js` · `js/sync.js` ·
+`js/crypto.js` · `js/diff.js` · `js/collabcore.js` · `js/collabnet.js` · `js/collab.js` · `js/app.js` (router, home, boot)

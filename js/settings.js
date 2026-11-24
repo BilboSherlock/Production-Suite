@@ -128,7 +128,7 @@ function openSettings(P) {
       h('div', { class: 'preset-grid' }, Object.entries(PRESETS).map(([k, p]) => h('button', { class: 'preset' + (curPreset === k ? ' on' : ''), onclick: () => { cur = new Set(p.on); curPreset = k; draw(); } }, h('b', {}, p.label), h('span', { class: 'small muted' }, p.desc)))),
       h('div', { class: 'feat-cols' }, NAV_GROUPS.map(g => h('div', { class: 'feat-col' }, h('h4', {}, g), FEATURE_DEFS.filter(f => f[2] === g).map(f => h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: cur.has(f[0]), disabled: f[0] === 'overview', onchange: e => { e.target.checked ? cur.add(f[0]) : cur.delete(f[0]); matchPreset(); draw(); } }), icon(f[3], 14), f[1]))))),
       curPreset === 'custom' ? h('p', { class: 'small muted' }, 'Custom selection.') : null,
-      scoped ? null : h('div', { class: 'row', style: { margin: '6px 0 14px', flexWrap: 'wrap', gap: '10px' } }, h('span', { class: 'small muted' }, 'Touch mode (bigger targets for tablets)'), h('div', { class: 'seg' }, [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']].map(([k, l]) => h('button', { class: Device.mode() === k ? 'on' : '', onclick: e => { Device.setMode(k); [...e.currentTarget.parentNode.children].forEach(b => b.classList.toggle('on', b === e.currentTarget)); } }, l))), h('button', { class: 'btn sm', onclick: () => tabletHelp() }, 'Tablet setup & install…')),
+      scoped ? null : deviceSection(),
       h('h3', { style: { fontSize: '15px', margin: '22px 0 4px' } }, 'Fold related tabs together'),
       h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, 'Folded sections share one menu entry with sub-tabs across the top — for example Storyboard, Shot list, Lookbook and Blocking under “Visualize”. What goes together adapts to the project’s format.'),
       h('div', { class: 'preset-grid' }, Object.entries(FOLD_PRESETS).map(([k, p]) => h('button', { class: 'preset' + (foldPreset === k ? ' on' : ''), onclick: () => { foldSet = new Set(p.hubs); foldPreset = k; draw(); } }, h('b', {}, p.label), h('span', { class: 'small muted' }, p.desc)))),
@@ -142,6 +142,23 @@ function openSettings(P) {
     Router.refresh(); toast('Settings saved');
   } }] });
   matchPreset(); matchFold(); draw();
+}
+
+/* the device this copy of the app is laid out for (stored per device, not per project) */
+function deviceSection() {
+  const box = h('div', { class: 'dev-sec' });
+  const draw = () => {
+    const cur = Device.profile(), seg = (label, opts, val, set) => h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'small muted' }, label), h('div', { class: 'seg' }, opts.map(([k, l]) => h('button', { class: val === k ? 'on' : '', onclick: () => { set(k); draw(); } }, l))));
+    morph(box, [
+      h('h3', { style: { fontSize: '15px', margin: '4px 0 4px' } }, 'Device'),
+      h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, 'Tailors the layout to the screen this copy of StudioBindahh runs on. Saved on this device only.'),
+      h('div', { class: 'dev-grid' }, Object.entries(DEVICES).map(([k, d]) => h('button', { class: 'dev-card' + (cur === k ? ' on' : ''), 'aria-pressed': String(cur === k), onclick: () => { Device.setProfile(k); draw(); } },
+        h('span', { class: 'dev-ico' }, icon(k === 'desktop' ? 'monitor' : k === 'ideatab' ? 'tablet' : 'wand', 22)), h('b', {}, d.label), h('span', { class: 'small muted' }, d.desc),
+        d.specs ? h('ul', { class: 'dev-specs' }, d.specs.map(x => h('li', {}, x))) : null))),
+      h('div', { class: 'small muted', style: { margin: '8px 0 4px' } }, `In use now: ${Device.form() === 'tablet' ? 'tablet' : 'desktop'} layout · ${innerWidth} × ${innerHeight} layout pixels · ${Device.touchOn() ? 'touch' : 'pointer'} controls`),
+      seg('Touch targets', [['auto', 'Follow device'], ['on', 'Always large'], ['off', 'Always compact']], Device.mode(), k => Device.setMode(k))]);
+  };
+  draw(); return box;
 }
 
 /* how to run StudioBindahh on an Android tablet (for example the Lenovo Idea Tab Plus) */

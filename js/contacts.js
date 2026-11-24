@@ -82,21 +82,29 @@ function importContactsModal(P, type, onDone) {
 }
 
 /* ---------- roles & credits editor (shown inside a contact's profile) ---------- */
-function contactRolesSection(c, redraw) {
+/* edits update this section in place (no closing and reopening the dialog); onKinds is told when cast / crew changes */
+function contactRolesSection(c, onKinds) {
+  const wrap = h('div');
+  const redraw = () => wrap.replaceChildren(build());
+  const kindsChanged = () => { redraw(); onKinds && onKinds(); };
+  redraw();
+  return wrap;
+  function build() {
   contactNormalize(c);
-  const kindBox = (k, l) => h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: c.kinds.includes(k), onchange: e => { if (e.target.checked) { if (!c.kinds.includes(k)) c.kinds.push(k); if (!c.positions.some(p => p.kind === k)) c.positions.push({ id: uid(), kind: k, dept: '', role: '' }); } else if (c.kinds.length > 1) c.kinds = c.kinds.filter(x => x !== k); else { e.target.checked = true; toast('A contact needs at least one of cast or crew.', true); } c.type = c.kinds.includes(c.type) ? c.type : c.kinds[0]; redraw && redraw(); } }), l);
+  const kindBox = (k, l) => h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: c.kinds.includes(k), onchange: e => { if (e.target.checked) { if (!c.kinds.includes(k)) c.kinds.push(k); if (!c.positions.some(p => p.kind === k)) c.positions.push({ id: uid(), kind: k, dept: '', role: '' }); } else if (c.kinds.length > 1) c.kinds = c.kinds.filter(x => x !== k); else { e.target.checked = true; toast('A contact needs at least one of cast or crew.', true); } c.type = c.kinds.includes(c.type) ? c.type : c.kinds[0]; kindsChanged(); } }), l);
   const posRows = c.positions.map(p => h('tr', {}, h('td', { style: { width: '110px' } }, h('select', { class: 'cell', onchange: e => { p.kind = e.target.value; } }, [['cast', 'Cast'], ['crew', 'Crew']].map(([k, l]) => h('option', { value: k, selected: k === p.kind }, l)))),
     h('td', {}, h('input', { class: 'cell', list: 'dl-dept', value: p.dept || '', placeholder: 'Department (crew)', oninput: e => { p.dept = e.target.value; } })), h('td', {}, h('input', { class: 'cell', value: p.role || '', placeholder: 'Position / billing', oninput: e => { p.role = e.target.value; } })),
-    h('td', { style: { width: '40px' } }, ibtn('trash', 'Remove position', () => { c.positions = c.positions.filter(x => x !== p); redraw && redraw(); }, 'danger'))));
+    h('td', { style: { width: '40px' } }, ibtn('trash', 'Remove position', () => { c.positions = c.positions.filter(x => x !== p); redraw(); }, 'danger'))));
   const crRows = c.credits.map(x => h('tr', {}, h('td', {}, h('input', { class: 'cell', value: x.production || '', placeholder: 'Production', oninput: e => { x.production = e.target.value; } })), h('td', { style: { width: '100px' } }, h('select', { class: 'cell', onchange: e => { x.kind = e.target.value; } }, [['cast', 'Cast'], ['crew', 'Crew']].map(([k, l]) => h('option', { value: k, selected: k === x.kind }, l)))),
     h('td', {}, h('input', { class: 'cell', value: x.role || '', placeholder: 'Role / character', oninput: e => { x.role = e.target.value; } })), h('td', { style: { width: '80px' } }, h('input', { class: 'cell', value: x.year || '', placeholder: 'Year', oninput: e => { x.year = e.target.value; } })),
-    h('td', { style: { width: '40px' } }, ibtn('trash', 'Remove credit', () => { c.credits = c.credits.filter(z => z !== x); redraw && redraw(); }, 'danger'))));
+    h('td', { style: { width: '40px' } }, ibtn('trash', 'Remove credit', () => { c.credits = c.credits.filter(z => z !== x); redraw(); }, 'danger'))));
   return h('div', { class: 'pf-sec' }, h('h4', {}, 'Roles & credits'), h('div', { class: 'row', style: { gap: '18px', marginBottom: '8px' } }, h('span', { class: 'small muted' }, 'This person works as'), kindBox('cast', 'Cast / talent'), kindBox('crew', 'Crew')),
     h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Works as', 'Department', 'Position / billing', ''].map(x => h('th', {}, x)))), h('tbody', {}, posRows)),
-    h('button', { class: 'btn sm', style: { margin: '6px 0 14px' }, onclick: () => { c.positions.push({ id: uid(), kind: c.kinds[0], dept: '', role: '' }); redraw && redraw(); } }, icon('plus', 13), 'Add another position'),
+    h('button', { class: 'btn sm', style: { margin: '6px 0 14px' }, onclick: () => { c.positions.push({ id: uid(), kind: c.kinds[0], dept: '', role: '' }); redraw(); } }, icon('plus', 13), 'Add another position'),
     h('div', { class: 'small muted', style: { margin: '6px 0' } }, 'Credits — productions this person has worked on, and in what role. Added automatically when you save a project’s people to contacts.'),
     c.credits.length ? h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Production', 'As', 'Role / character', 'Year', ''].map(x => h('th', {}, x)))), h('tbody', {}, crRows)) : null,
-    h('button', { class: 'btn sm', style: { marginTop: '6px' }, onclick: () => { c.credits.push({ id: uid(), production: '', kind: c.kinds[0], role: '', year: '', notes: '' }); redraw && redraw(); } }, icon('plus', 13), 'Add credit'));
+    h('button', { class: 'btn sm', style: { marginTop: '6px' }, onclick: () => { c.credits.push({ id: uid(), production: '', kind: c.kinds[0], role: '', year: '', notes: '' }); redraw(); } }, icon('plus', 13), 'Add credit'));
+  }
 }
 
 /* ---------- the Contacts page (home level) ---------- */
@@ -109,14 +117,19 @@ function renderContacts() {
   const edit = c => { openProfile(c, async () => { contactNormalize(c); await Contacts.save(); draw(); }, { contact: true }); };
   const add = kind => { const c = contactNormalize(Object.assign(newPerson(kind), { id: uid(), kinds: [kind], positions: [] })); c.positions = [{ id: uid(), kind, dept: '', role: '' }]; Contacts.list.push(c); Contacts.save(); draw(); edit(c); };
   const match = c => (tab === 'all' || (tab === 'both' ? c.kinds.length > 1 : c.kinds.includes(tab))) && (!q || JSON.stringify(Object.values(c)).toLowerCase().includes(q));
+  /* redrawn in place, cards matched by id, so switching Everyone / Cast / Crew or searching never flashes */
   function draw() {
     const rows = Contacts.list.filter(match).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     count.textContent = `${rows.length} of ${Contacts.list.length}`;
-    body.replaceChildren(rows.length ? h('div', { class: 'people-grid' }, rows.map(c => h('div', { class: 'pcardp', tabindex: 0, onclick: () => edit(c), onkeydown: e => { if (e.key === 'Enter') edit(c); } },
+    morph(body, rows.length ? h('div', { class: 'people-grid' }, rows.map(card))
+      : Contacts.list.length ? h('div', { class: 'empty' }, h('h3', {}, 'Nobody matches'), h('p', {}, 'Try another filter or search.'))
+      : h('div', { class: 'empty' }, h('h3', {}, 'No contacts yet'), h('p', {}, 'Add the people you work with again and again, then import them into any project in one click.')));
+  }
+  function card(c) {
+    return h('div', { class: 'pcardp', 'data-key': c.id, tabindex: 0, onclick: () => edit(c), onkeydown: e => { if (e.key === 'Enter') edit(c); } },
       avatar(c, 56), h('div', { class: 'pc-name' }, c.name || '(no name)'), h('div', { class: 'small muted' }, c.positions.map(p => p.role || p.dept).filter(Boolean).join(' · ') || kindsText(c)), h('div', { class: 'small muted clip' }, [c.email, c.phone].filter(Boolean).join(' · ')),
       h('div', { class: 'row', style: { marginTop: '6px', flexWrap: 'wrap', gap: '4px' } }, c.kinds.map(k => h('span', { class: 'pill' }, k === 'cast' ? 'Cast' : 'Crew')), c.credits.length ? h('span', { class: 'pill', title: c.credits.map(x => `${x.production}${x.role ? ' — ' + x.role : ''}`).join('\n') }, `${c.credits.length} credit${c.credits.length > 1 ? 's' : ''}`) : null, h('span', { class: 'grow' }),
-        h('button', { class: 'icon-btn danger', title: 'Delete contact', onclick: async e => { e.stopPropagation(); if (await confirmBox(`Delete ${c.name || 'this contact'} from your contacts? Projects that already imported them keep their copy.`)) { Contacts.list = Contacts.list.filter(x => x !== c); await Contacts.save(); draw(); } } }, icon('trash', 15))))))
-      : h('div', { class: 'empty' }, h('h3', {}, 'No contacts yet'), h('p', {}, 'Add the people you work with again and again, then import them into any project in one click.')));
+        h('button', { class: 'icon-btn danger', title: 'Delete contact', onclick: async e => { e.stopPropagation(); if (await confirmBox(`Delete ${c.name || 'this contact'} from your contacts? Projects that already imported them keep their copy.`)) { Contacts.list = Contacts.list.filter(x => x !== c); await Contacts.save(); draw(); } } }, icon('trash', 15))));
   }
   async function importFile() {
     const f = (await pickFiles('.json,.csv'))[0]; if (!f) return; const t = await readText(f);

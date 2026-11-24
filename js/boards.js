@@ -15,7 +15,7 @@ Views.board = function (root) {
   const P = Store.P; P.seqs = P.seqs || []; let scenes = getScenes(P);
   const ar = () => ASPECTS[P.settings.aspect] || 16 / 9;
   if (!UI.sbView) UI.sbView = (P.seqs.length || P.boards.some(b => !b.sceneId) || !P.boards.length) ? 'seq' : 'scene';
-  const area = h('div', { class: 'page', style: { maxWidth: '1500px' } }), drag = { id: null };
+  const area = h('div', { class: 'page', style: { maxWidth: '1500px' } });
   const aspSel = h('select', { class: 'inp', style: { width: 'auto' }, title: 'Frame aspect ratio', onchange: e => { P.settings.aspect = e.target.value; Store.touch(); draw(); toast('Existing frames keep their pictures; re-open one to see it in the new shape.'); } }, Object.keys(ASPECTS).map(k => h('option', { value: k, selected: k === P.settings.aspect }, k)));
   const colSel = h('select', { class: 'inp', style: { width: 'auto' }, title: 'Frames per row', onchange: e => { UI.boardCols = +e.target.value; draw(); } }, [2, 3, 4, 5, 6].map(n => h('option', { value: n, selected: n === UI.boardCols }, n + ' per row')));
   const viewSeg = h('div', { class: 'seg' }, [['seq', 'Sequences'], ['scene', 'By scene'], ['strip', 'Filmstrip']].map(([k, l]) => h('button', { 'data-k': k, class: UI.sbView === k ? 'on' : '', onclick: () => { UI.sbView = k; draw(); } }, l)));
@@ -74,18 +74,17 @@ Views.board = function (root) {
       b.img ? h('img', { src: b.img, alt: b.caption || 'storyboard frame', draggable: false }) : h('span', { class: 'row small' }, icon('edit', 16), 'Click to draw'),
       h('span', { class: 'pn' }, [sc && `Sc ${sc.num}`, shot && shotLabel(P, shot, scenes), 'Frame ' + (i + 1)].filter(Boolean).join(' · ')), moving ? h('span', { class: 'cammove', title: 'Camera move' }, icon('camera', 12), ' move') : null);
     const swap = d => { const j = i + d; if (j < 0 || j >= list.length) return; const a = P.boards.indexOf(b), c = P.boards.indexOf(list[j]); [P.boards[a], P.boards[c]] = [P.boards[c], P.boards[a]]; Store.touch(); draw(); };
-    const el = h('div', { class: 'panel', draggable: 'true', 'data-id': b.id, ondragstart: e => { drag.id = b.id; e.dataTransfer.setData('text/plain', b.id); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); }, ondragend: () => { el.classList.remove('dragging'); document.querySelectorAll('.panel.over,.addpanel.over').forEach(x => x.classList.remove('over')); },
-      ondragover: e => { if (drag.id && drag.id !== b.id) { e.preventDefault(); el.classList.add('over'); } }, ondragleave: () => el.classList.remove('over'), ondrop: e => { e.preventDefault(); el.classList.remove('over'); if (drag.id) place(drag.id, b.id, groupKeyOf(b)); drag.id = null; } }, fr,
+    const el = h('div', { class: 'panel', 'data-id': b.id }, fr,
       h('div', { class: 'pt' }, h('textarea', { class: 'auto', rows: 1, placeholder: 'Caption — action, dialogue, camera…', value: b.caption, oninput: e => { b.caption = e.target.value; autosize(e.target); Store.touch(); } })),
       h('div', { class: 'pa' }, ibtn('left', 'Move earlier', () => swap(-1)), ibtn('right', 'Move later', () => swap(1)), ibtn('edit', 'Edit frame', () => editFrame(b)), ibtn('copy', 'Duplicate', () => dupFrame(b)),
         ibtn('more', 'More', e => menu(e.currentTarget, [{ label: 'Copy frame', icon: 'copy', onClick: () => copyFrame(b) }, { label: 'Paste a frame after this', icon: 'copy', onClick: () => pasteFrame(b, groupKeyOf(b)) }, { label: 'Insert blank frame after', icon: 'plus', onClick: () => { const nb = newFrame(Object.assign({ sceneId: b.sceneId, seqId: b.seqId }, {})); insertAfter(b, nb); Store.touch(); draw(); editFrame(nb); } }, { sep: true },
           !b.shotId && b.sceneId ? { label: 'Create a shot from this frame', icon: 'camera', onClick: () => { shotFromFrame(b); Store.touch(); draw(); toast('Shot added to the shot list'); } } : null, b.shotId ? { label: 'Unlink from shot', icon: 'x', onClick: () => { b.shotId = ''; Store.touch(); draw(); } } : null,
           b.sceneId ? { label: 'Make it free of any scene', icon: 'x', onClick: () => { b.sceneId = ''; b.shotId = ''; Store.touch(); draw(); } } : null].filter(Boolean))), h('span', { class: 'grow' }),
         ibtn('trash', 'Delete frame', () => { P.boards = P.boards.filter(x => x !== b); Store.touch(); draw(); }, 'danger')));
-    return el;
+    return DnD.item(el, 'frame', b.id, id => place(id, b.id, groupKeyOf(b)));   // drop a frame here to put it before this one
   }
-  const addTile = (group, label = 'Add frame') => h('div', { class: 'addpanel', tabindex: 0, role: 'button', onclick: () => addFrame(group), onkeydown: e => { if (e.key === 'Enter') addFrame(group); },
-    ondragover: e => { if (drag.id) { e.preventDefault(); e.currentTarget.classList.add('over'); } }, ondragleave: e => e.currentTarget.classList.remove('over'), ondrop: e => { e.preventDefault(); e.currentTarget.classList.remove('over'); if (drag.id) place(drag.id, null, group); drag.id = null; } }, h('span', { class: 'row' }, icon('plus'), label));
+  const addTile = (group, label = 'Add frame') => DnD.zone(h('div', { class: 'addpanel', tabindex: 0, role: 'button', onclick: () => addFrame(group), onkeydown: e => { if (e.key === 'Enter') addFrame(group); } },
+    h('span', { class: 'row' }, icon('plus'), label)), 'frame', id => place(id, null, group));   // dropping on "Add frame" moves to the end of the group
   function groupBlock(title, sub, list, group, head) {
     const g = h('div', { class: 'board-grid' }); list.forEach((b, i) => g.append(card(b, i, list))); g.append(addTile(group));
     return h('div', { class: 'sb-group' }, head || h('div', { class: 'row', style: { margin: '8px 0 12px' } }, h('h3', {}, title), h('span', { class: 'pill' }, list.length + ' frame' + (list.length === 1 ? '' : 's')), sub), g);
@@ -110,8 +109,8 @@ Views.board = function (root) {
     } else {
       const total = sum(P.boards, b => b.dur || 3), strip = h('div', { class: 'sb-strip' });
       P.boards.forEach((b, i) => { const sc = scenes.find(s => s.id === b.sceneId), sq = P.seqs.find(s => s.id === b.seqId);
-        strip.append(h('div', { class: 'sb-sf', draggable: 'true', style: { width: Math.max(150, (b.dur || 3) * 54) + 'px' }, ondragstart: e => { drag.id = b.id; e.dataTransfer.setData('text/plain', b.id); }, ondragover: e => { if (drag.id && drag.id !== b.id) { e.preventDefault(); e.currentTarget.classList.add('over'); } }, ondragleave: e => e.currentTarget.classList.remove('over'), ondrop: e => { e.preventDefault(); if (drag.id) place(drag.id, b.id, null); drag.id = null; }, onclick: () => editFrame(b) },
-          h('div', { class: 'sb-sfi', style: { aspectRatio: String(ar()), borderTop: sq ? `3px solid ${sq.color}` : '' } }, b.img ? h('img', { src: b.img, draggable: false }) : h('span', { class: 'small muted' }, 'empty')), h('div', { class: 'small' }, h('b', {}, String(i + 1)), ' ', [sc && 'Sc ' + sc.num, (b.dur || 3) + 's', b.cam && b.cam.b ? '🎥' : ''].filter(Boolean).join(' · ')), h('div', { class: 'small muted clip' }, b.caption || ''))); });
+        strip.append(DnD.item(h('div', { class: 'sb-sf', style: { width: Math.max(150, (b.dur || 3) * 54) + 'px' }, onclick: () => editFrame(b) },
+          h('div', { class: 'sb-sfi', style: { aspectRatio: String(ar()), borderTop: sq ? `3px solid ${sq.color}` : '' } }, b.img ? h('img', { src: b.img, draggable: false }) : h('span', { class: 'small muted' }, 'empty')), h('div', { class: 'small' }, h('b', {}, String(i + 1)), ' ', [sc && 'Sc ' + sc.num, (b.dur || 3) + 's', b.cam && b.cam.b ? '🎥' : ''].filter(Boolean).join(' · ')), h('div', { class: 'small muted clip' }, b.caption || '')), 'frame', b.id, id => place(id, b.id, null))); });
       area.append(h('div', { class: 'row', style: { marginBottom: '10px' } }, h('b', {}, `${P.boards.length} frame${P.boards.length === 1 ? '' : 's'}`), h('span', { class: 'muted small' }, `· runtime ${Math.floor(total / 60)}:${String(Math.round(total % 60)).padStart(2, '0')} · drag to reorder, click to edit`)), strip, h('div', { style: { marginTop: '12px' } }, h('button', { class: 'btn', onclick: () => addFrame() }, icon('plus', 15), 'Add frame')));
     }
     autosizeAll(area);
@@ -140,6 +139,7 @@ Views.board = function (root) {
     function toggle() { if (playingNow) return stop(); playingNow = true; playBtn.lastChild.textContent = 'Pause'; run(); }
     function key(e) { if (e.key === 'Escape') close(); else if (e.key === 'ArrowRight') go(1); else if (e.key === 'ArrowLeft') go(-1); else if (e.key === ' ') { e.preventDefault(); toggle(); } }
     function close() { stop(); document.removeEventListener('keydown', key); ov.remove(); }
+    ov._close = close;
     document.addEventListener('keydown', key); document.body.append(ov); show(); ov.focus();
   }
   /* record the animatic to a .webm file (camera moves and holds, in real time) */

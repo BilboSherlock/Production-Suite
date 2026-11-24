@@ -16,6 +16,7 @@ Live collaboration on a local network
     are rate-limited, and sessions end when the host closes them.
 Python 3.8+ standard library only.
 """
+import gzip
 import hashlib
 import hmac
 import json
@@ -27,6 +28,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -135,6 +137,24 @@ def purge():
         SEEN_SIGS.pop(s, None)
 
 
+STATIC_CACHE = {}      # path -> (mtime, size, raw bytes, gzipped bytes or None, etag)
+COMPRESSIBLE = (".html", ".js", ".css", ".json", ".webmanifest", ".svg", ".txt")
+
+
+def static_bytes(full):
+    """File bytes, a gzipped copy for text assets, and an ETag; cached until the file changes."""
+    st = os.stat(full)
+    hit = STATIC_CACHE.get(full)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2], hit[3], hit[4]
+    with open(full, "rb") as f:
+        data = f.read()
+    zipped = gzip.compress(data, 6) if full.endswith(COMPRESSIBLE) and len(data) > 1024 else None
+    etag = '"%s"' % hashlib.sha1(data).hexdigest()[:20]
+    STATIC_CACHE[full] = (st.st_mtime_ns, st.st_size, data, zipped, etag)
+    return data, zipped, etag
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "StudioBindahh"
@@ -217,6 +237,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_get(p)
         return self.static(p.path)
 
+    def do_HEAD(self):
+        p = urlparse(self.path)
+        if p.path.startswith("/api/"):
+            return self.fail(405, "method not allowed")
+        return self.static(p.path)
+
     def do_POST(self):
         p = urlparse(self.path)
         if not p.path.startswith("/api/"):
@@ -249,17 +275,31 @@ class Handler(BaseHTTPRequestHandler):
             ctype = "text/javascript"
         elif full.endswith(".webmanifest"):
             ctype = "application/manifest+json"
-        with open(full, "rb") as f:
-            data = f.read()
+        data, zipped, etag = static_bytes(full)
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        use_gz = zipped is not None and "gzip" in (self.headers.get("Accept-Encoding") or "")
+        body = zipped if use_gz else data
         self.send_response(200)
         self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") else ""))
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        if use_gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
+        self.send_header("ETag", etag)
+        # revalidate every time (a cheap 304 when nothing changed), so edits show up on the next load
+        self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
         if full.endswith("sw.js"):
             self.send_header("Service-Worker-Allowed", "/")
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     # ---------- API: GET ----------
     def api_get(self, p):
@@ -534,16 +574,46 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(200, {"ok": True, "seq": seq})
 
 
+def already_running(port):
+    """True when a StudioBindahh server already answers on this port."""
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/", method="HEAD")
+        with urllib.request.urlopen(req, timeout=1.5) as r:
+            return (r.headers.get("Server") or "").startswith("StudioBindahh")
+    except Exception:
+        return False
+
+
+def make_server(host, port):
+    """Bind the port, or the next free one. Windows' SO_REUSEADDR would let a second copy
+    silently share a busy port (splitting live sessions between two processes), so it stays off there."""
+    ThreadingHTTPServer.allow_reuse_address = os.name != "nt"
+    ThreadingHTTPServer.daemon_threads = True
+    for p in range(port, port + 20):
+        try:
+            return ThreadingHTTPServer((host, p), Handler), p
+        except OSError:
+            continue
+    raise SystemExit(f"No free port between {port} and {port + 19}.")
+
+
 def main():
     host = "127.0.0.1" if LOCAL_ONLY else "0.0.0.0"
-    ThreadingHTTPServer.allow_reuse_address = True
-    ThreadingHTTPServer.daemon_threads = True
-    httpd = ThreadingHTTPServer((host, PORT), Handler)
-    url = f"http://localhost:{PORT}"
+    if already_running(PORT):
+        url = f"http://localhost:{PORT}"
+        print(f"StudioBindahh is already running at {url}")
+        if "--no-open" not in sys.argv:
+            webbrowser.open(url)
+        return
+    httpd, port = make_server(host, PORT)
+    url = f"http://localhost:{port}"
+    if port != PORT:
+        print(f"Port {PORT} is busy, so StudioBindahh is using {port} instead.")
+        print("  Note: projects are stored per address, so open the app on the same port each time.")
     print(f"StudioBindahh running at {url}  (Ctrl+C to stop)")
     if not LOCAL_ONLY:
         for ip in lan_addresses():
-            print(f"  On your network:  http://{ip}:{PORT}  (other devices can only connect while a session is open)")
+            print(f"  On your network (tablet, phone):  http://{ip}:{port}")
     if "--no-open" not in sys.argv:
         webbrowser.open(url)
     try:

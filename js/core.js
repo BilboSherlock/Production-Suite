@@ -23,13 +23,52 @@ function h(tag, props, ...kids) {
     else if (k === 'style' && typeof v === 'object') { for (const s in v) { if (s.startsWith('--')) e.style.setProperty(s, v[s]); else e.style[s] = v[s]; } }
     else if (k === 'html') e.innerHTML = v;
     else if (k === 'value') value = v;
-    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k.startsWith('on')) { const t = k.slice(2); (e._on || (e._on = {}))[t] = v; e.addEventListener(t, hDispatch); }
     else if (k in e && k !== 'list') e[k] = v;
     else e.setAttribute(k, v === true ? '' : v);
   }
   kids.flat(Infinity).forEach(c => { if (c == null || c === false) return; e.append(c.nodeType ? c : document.createTextNode(c)); });
   if (value !== undefined) e.value = value;
   return e;
+}
+/* h() keeps each element's handlers in e._on behind one shared listener, so morph() can hand
+   a reused element its new handlers. */
+function hDispatch(ev) { const f = this._on && this._on[ev.type]; if (f) return f.call(this, ev); }
+
+/* ---------- morph: redraw in place ----------
+   Makes parent's children match `kids` (fresh nodes from h()). Matching nodes are kept and
+   brought up to date — attributes, handlers, text, form state — so a view can rebuild its
+   whole tree as often as it likes with no flicker, and keeps scroll, focus and the caret.
+   Children with a data-key (e.g. a person's id) are matched by key, so a filtered or
+   re-sorted list moves its rows instead of rewriting them; the rest match by position.
+   Nodes marked _own (listeners h() doesn't know about, e.g. drag & drop) and media are
+   swapped whole rather than reused. */
+const MORPH_WHOLE = new Set(['CANVAS', 'VIDEO', 'AUDIO', 'IFRAME', 'IMG']);
+function morph(parent, kids) {
+  const next = [kids].flat(Infinity).filter(c => c != null && c !== false).map(c => c.nodeType ? c : document.createTextNode(c));
+  const old = [...parent.childNodes], byKey = new Map(), loose = [], kept = new Set(), key = n => n.nodeType === 1 && n.dataset.key;
+  for (const n of old) { const k = key(n); if (k) byKey.set(k, n); else loose.push(n); }
+  let li = 0;
+  const pairs = next.map(b => { const k = key(b), a = k ? byKey.get(k) : loose[li++], ok = a && !kept.has(a) && morphable(a, b); if (ok) kept.add(a); return [b, ok ? a : null]; });
+  for (const n of old) if (!kept.has(n)) n.remove();          // drop leftovers first, so kept nodes move as little as possible
+  pairs.forEach(([b, a], i) => {                               // (moving a node would blur a field being typed in)
+    const n = a || b; if (a) morphNode(a, b);
+    const at = parent.childNodes[i]; if (at !== n) parent.insertBefore(n, at || null);
+  });
+}
+function morphable(a, b) {
+  return a.nodeType === b.nodeType && a.nodeName === b.nodeName && !a._own && !b._own && !MORPH_WHOLE.has(a.nodeName)
+    && (a.nodeType !== 1 || ((a.id || '') === (b.id || '') && (a.getAttribute('type') || '') === (b.getAttribute('type') || '')));
+}
+function morphNode(a, b) {
+  if (a.nodeType !== 1) { if (a.data !== b.data) a.data = b.data; return; }
+  for (const { name, value } of b.attributes) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
+  if (a._on || b._on) { for (const t in b._on) if (!a._on || !a._on[t]) a.addEventListener(t, hDispatch); a._on = b._on; }
+  morph(a, [...b.childNodes]);
+  /* form state lives in properties, not attributes; never overwrite what is being typed */
+  if ('value' in b && a !== document.activeElement && a.value !== b.value) a.value = b.value;
+  for (const k of ['checked', 'selected', 'indeterminate']) if (k in b && a[k] !== b[k]) a[k] = b[k];
 }
 
 /* ---------- icons (feather-style strokes) ---------- */
@@ -101,6 +140,12 @@ const ICONS = {
   deck: 'M2 3h20v14H2z|M8 21h8|M12 17v4',
   user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2|M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   report: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z|M14 2v6h6|M8 13h2|M8 17h2|M12 13h4|M12 17h4',
+  monitor: 'M3 4h18a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z|M8 21h8|M12 17v4',
+  tablet: 'M5 2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z|M11 18h2',
+  chev: 'M6 9l6 6 6-6',
+  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z|M12 6v6l4 2',
+  flag: 'M4 22V4|M4 4h13l-2 4 2 4H4',
+  link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7|M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
 };
 function icon(name, size = 18) {
   const s = document.createElement('span');
@@ -118,8 +163,11 @@ function toast(msg, err) {
 }
 function modal({ title, body, buttons = [], wide = false, onClose }) {
   const ov = h('div', { class: 'overlay' });
-  const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  function close() { ov.remove(); document.removeEventListener('keydown', onKey, true); onClose && onClose(); }
+  /* Escape closes only the topmost dialog, so a confirmation over a form doesn't take the form with it */
+  const onKey = e => { if (e.key === 'Escape' && ov === [...document.querySelectorAll('.overlay')].pop()) { e.stopPropagation(); close(); } };
+  let closed = false;
+  function close() { if (closed) return; closed = true; ov.remove(); document.removeEventListener('keydown', onKey, true); onClose && onClose(); }
+  ov._close = close;
   const box = h('div', { class: 'modal' + (wide ? ' wide' : ''), role: 'dialog', 'aria-label': title },
     h('div', { class: 'modal-h' }, h('h3', {}, title), ibtn('x', 'Close', close)),
     h('div', { class: 'modal-b' }, body),
@@ -128,10 +176,17 @@ function modal({ title, body, buttons = [], wide = false, onClose }) {
       onclick: () => { if (b.onClick && b.onClick() === false) return; close(); }
     }, b.label))) : null);
   ov.append(box);
-  ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+  /* close on a tap or click on the backdrop itself; waiting for the click (not mousedown) stops a tap on a
+     touch screen from also activating whatever is behind the dialog once it disappears */
+  let downOnBackdrop = false;
+  ov.addEventListener('pointerdown', e => { downOnBackdrop = e.target === ov; });
+  ov.addEventListener('click', e => { if (downOnBackdrop && e.target === ov) close(); downOnBackdrop = false; });
   document.addEventListener('keydown', onKey, true);
   document.body.append(ov);
-  const f = $('input,textarea,select', box); if (f && !wide) setTimeout(() => f.focus(), 30);
+  /* focus the first field — on a touch screen only when it is the dialog's single field, so the
+     on-screen keyboard doesn't pop up over a form you came to read or choose from */
+  const fields = $$('input:not([type=hidden]),textarea,select', box), f = fields[0];
+  if (f && !wide && (!Device.touchOn() || fields.length === 1)) setTimeout(() => f.focus(), 30);
   return { close, box };
 }
 function confirmBox(msg, okLabel = 'Delete', title = 'Are you sure?') {
@@ -243,24 +298,29 @@ const DB = {
 
 function setSaveState(s) {
   const e = $('#savestate'); if (!e) return;
-  e.className = s;
-  e.innerHTML = `<i></i>${s === 'saving' ? 'Saving…' : s === 'error' ? 'Save failed' : 'All changes saved'}`;
+  const label = s === 'saving' ? 'Saving…' : s === 'error' ? 'Save failed' : 'All changes saved';
+  e.className = s; e.title = label; e.setAttribute('role', 'status');
+  e.innerHTML = `<i></i>${label}`;
 }
 const Store = {
-  projects: {}, P: null, persist: true, _t: null,
+  projects: {}, P: null, persist: true, _t: null, dirty: false,
   async init() {
     try { await DB.open(); (await DB.all()).forEach(p => { Store.projects[p.id] = migrate(p); }); }
     catch (e) { Store.persist = false; console.warn('Persistent storage unavailable', e); }
   },
   touch() {
     const P = Store.P; if (!P) return;
-    P.updated = Date.now(); setSaveState('saving'); if (Hist.active) Hist.note(); if (window.Collab) Collab.onLocalChange(P);
+    P.updated = Date.now(); Store.dirty = true; setSaveState('saving'); if (Hist.active) Hist.note(); if (window.Collab) Collab.onLocalChange(P);
     clearTimeout(Store._t); Store._t = setTimeout(Store.flush, 450);
   },
-  async flush() {
+  /* writes the open project. Switching sections only writes when something changed (a whole-project
+     write is the slowest part of navigating on a tablet); leaving or hiding the app always writes. */
+  async flush(force) {
     clearTimeout(Store._t);
-    const P = Store.P; if (!P || !Store.persist) { setSaveState('saved'); return; }
-    try { await DB.put(P); setSaveState('saved'); if (window.Sync) Sync.queuePush(P); } catch (e) { setSaveState('error'); toast('Could not save: ' + (e.message || e), true); }
+    const P = Store.P; if (!P || !Store.persist) { Store.dirty = false; setSaveState('saved'); return; }
+    if (!Store.dirty && force !== true) return;
+    Store.dirty = false;
+    try { await DB.put(P); if (!Store.dirty) setSaveState('saved'); if (window.Sync) Sync.queuePush(P); } catch (e) { Store.dirty = true; setSaveState('error'); toast('Could not save: ' + (e.message || e), true); }
   },
   async add(p) { if (typeof finEnsure === 'function') finEnsure(p); Store.projects[p.id] = p; if (Store.persist) await DB.put(p); },
   async remove(id) { delete Store.projects[id]; if (Store.persist) await DB.del(id); },
@@ -591,6 +651,9 @@ const fmtTime = t => { if (!t) return ''; const [hh, mm] = t.split(':').map(Numb
 const fmtDate = d => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); return x.toLocaleDateString(typeof regionDef === 'function' ? regionDef().locale : undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }); };
 const fmtDateShort = d => { if (!d) return ''; return new Date(d + 'T12:00:00').toLocaleDateString(typeof regionDef === 'function' ? regionDef().locale : undefined, { weekday: 'short', month: 'short', day: 'numeric' }); };
 const money = (n, p = Store.P) => ((p && p.settings.currency) || '$') + (+n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/* the script editor's lines grow with their text natively (CSS field-sizing) where supported, measured otherwise */
+const AUTO_FIELD = typeof CSS !== 'undefined' && !!CSS.supports && CSS.supports('field-sizing', 'content');
+if (AUTO_FIELD) document.documentElement.classList.add('auto-field');
 function autosize(ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
 function autosizeAll(root) {
   const l = $$('textarea.auto', root); l.forEach(t => t.style.height = 'auto'); const hs = l.map(t => t.scrollHeight); l.forEach((t, i) => t.style.height = hs[i] + 'px');
@@ -637,11 +700,31 @@ function locName(P, s) { const m = P.sceneMeta[s.id], L = m && m.locationId && P
 /* ===================================================================
    Device support — tablets and touch screens
    =================================================================== */
+/* ---------- device profiles ----------
+   A profile tunes the whole layout for one screen: density, touch targets, how the live
+   dashboard is arranged, and which device features are used. `form` drives the CSS
+   (html[data-form]), `id` allows exact tuning for one model (html[data-device]). */
+const DEVICES = {
+  auto: { label: 'Automatic', desc: 'Detects the screen and pointer each time the app opens.' },
+  desktop: { label: 'Desktop / laptop', desc: 'Mouse and keyboard on a large screen: dense layout, hover tools, keyboard shortcuts.', form: 'desktop', touch: false,
+    specs: ['Any size from 1366 × 768 up', 'Mouse, trackpad & keyboard', 'Side-by-side panels'] },
+  ideatab: { label: 'Lenovo Idea Tab Plus 12.1″', desc: 'Laid out for its 2560 × 1600 (2.5K) 12.1″ screen at about 1280 × 800 layout pixels, in landscape or portrait.', form: 'tablet', touch: true, pen: true, css: [1280, 800],
+    specs: ['12.1″ · 2560 × 1600 · 16:10', 'Touch + Lenovo Tab Pen Plus', 'Landscape cockpit, portrait stack', 'Screen kept awake on live views'] },
+};
 const Device = {
   installEvent: null,
+  profile() { try { const p = localStorage.getItem('sb-device'); return DEVICES[p] ? p : 'auto'; } catch (e) { return 'auto'; } },
+  /* the profile in effect: the chosen one, or a guess from the screen and pointer */
+  form() { const d = DEVICES[Device.profile()]; return d.form || (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) <= 1100 ? 'tablet' : 'desktop'); },
+  setProfile(p) { try { localStorage.setItem('sb-device', p); } catch (e) { } Device.apply(); },
   mode() { try { return localStorage.getItem('sb-touch') || 'auto'; } catch (e) { return 'auto'; } },
-  touchOn() { const m = Device.mode(); return m === 'on' || (m === 'auto' && matchMedia('(pointer: coarse)').matches); },
-  apply() { document.documentElement.dataset.touch = Device.touchOn() ? '1' : ''; if (!Device.touchOn()) delete document.documentElement.dataset.touch; },
+  /* touch targets: an explicit on / off wins, then the profile, then the pointer */
+  touchOn() { const m = Device.mode(), d = DEVICES[Device.profile()]; return m === 'on' || (m === 'auto' && (d.touch !== undefined ? d.touch : matchMedia('(pointer: coarse)').matches)); },
+  apply() {
+    const r = document.documentElement, p = Device.profile();
+    if (Device.touchOn()) r.dataset.touch = '1'; else delete r.dataset.touch;
+    r.dataset.form = Device.form(); if (p === 'auto') delete r.dataset.device; else r.dataset.device = p;
+  },
   setMode(m) { try { localStorage.setItem('sb-touch', m); } catch (e) { } Device.apply(); },
   secure: () => window.isSecureContext,
   installed: () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true,
@@ -653,6 +736,23 @@ const Device = {
     try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { }    // ask the browser not to evict our data
     /* keep the on-screen keyboard from hiding what you are typing */
     if (window.visualViewport) { const set = () => document.documentElement.style.setProperty('--vvh', visualViewport.height + 'px'); visualViewport.addEventListener('resize', set); set(); }
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Device._awake.size) Device.awake([...Device._awake][0], true); });
+    /* full-screen presentations (pitch deck, storyboard) keep the screen awake while they are open */
+    new MutationObserver(() => Device.awake('present', !!document.querySelector('body > .present'))).observe(document.body, { childList: true });
+  },
+  /* keep the screen on while something needs watching (live dashboard, presentations, table reads).
+     Each caller holds its own reason; the lock is released when none remain, and re-taken when the
+     tablet wakes or the tab comes back to the front (the browser drops it when hidden). */
+  _awake: new Set(), _lock: null,
+  async awake(reason, on) {
+    if (on) Device._awake.add(reason); else Device._awake.delete(reason);
+    if (!('wakeLock' in navigator)) return;
+    try {
+      if (Device._awake.size && !Device._lock && document.visibilityState === 'visible') {
+        Device._lock = await navigator.wakeLock.request('screen');
+        Device._lock.addEventListener('release', () => { Device._lock = null; });
+      } else if (!Device._awake.size && Device._lock) { const l = Device._lock; Device._lock = null; await l.release(); }
+    } catch (e) { Device._lock = null; }
   },
   async install() { const e = Device.installEvent; if (!e) return false; e.prompt(); const r = await e.userChoice.catch(() => ({})); Device.installEvent = null; return r.outcome === 'accepted'; },
 };

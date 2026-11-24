@@ -13,9 +13,11 @@ const MODE_LABEL = { screenplay: 'Screenplay', stage: 'Stage play', av: 'AV scri
 const effectiveTheme = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 function toggleTheme() {
   const t = effectiveTheme() === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = t; try { localStorage.setItem('sb-theme', t); } catch (e) { }
+  document.documentElement.dataset.theme = t; try { localStorage.setItem('sb-theme', t); } catch (e) { } syncThemeColor();
   const b = $('#themeBtn'); if (b) b.replaceChildren(icon(t === 'dark' ? 'sun' : 'moon'));
 }
+function syncThemeColor() { const m = document.getElementById('themeColor'); if (m) m.content = effectiveTheme() === 'dark' ? '#171b22' : '#ffffff'; }
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeColor);
 const themeBtn = () => h('button', { class: 'icon-btn', id: 'themeBtn', title: 'Switch light / dark theme', 'aria-label': 'Toggle theme', onclick: toggleTheme }, icon(effectiveTheme() === 'dark' ? 'sun' : 'moon'));
 
 function showShortcuts() {
@@ -32,15 +34,43 @@ function showShortcuts() {
 }
 
 /* ---------------- router ---------------- */
+/* what the shell (rail, top bar, hub tabs) shows; when it is unchanged a refresh only redraws the content */
+const shellSig = (P, view) => JSON.stringify([P.id, P.title, P.mode, P.settings.region, view, window.Collab && Collab.sess ? 1 : 0,
+  buildNav(P).map(g => [g.label, g.items.map(it => [it[0], it[1], it[2], it[3] ? it[3].members.includes(view) : 0])])]);
+/* scroll positions inside the content, so a redraw doesn't jump back to the top */
+function scrollState(root) {
+  const out = [[root, root.scrollTop, root.scrollLeft]];
+  root.querySelectorAll('*').forEach(el => { if (el.scrollTop || el.scrollLeft) out.push([el.className && typeof el.className === 'string' ? el.className : el.tagName, el.scrollTop, el.scrollLeft]); });
+  return out;
+}
+function restoreScroll(root, st) {
+  const apply = () => { const used = new Set(); st.forEach(([k, t, l]) => {
+    const el = k === root ? root : [...root.querySelectorAll('*')].find(x => !used.has(x) && (typeof x.className === 'string' && x.className ? x.className : x.tagName) === k);
+    if (el) { used.add(el); el.scrollTop = t; el.scrollLeft = l; } }); };
+  apply(); requestAnimationFrame(apply);
+}
 const Router = {
-  cleanup: null,
-  refresh() { Router.render(); },
-  async render() {
+  cleanup: null, shell: null,
+  /* redraw the current section in place: same project and menu → only the content is rebuilt, scroll kept */
+  refresh() {
+    const sh = Router.shell, P = Store.P;
+    if (!sh || !P || P.id !== sh.pid || !document.body.contains(sh.main) || shellSig(P, sh.view) !== sh.sig) return Router.render();
     if (Router.cleanup) { try { Router.cleanup(); } catch (e) { console.error(e); } Router.cleanup = null; }
     closeMenu(); $$('.suggest, .palette').forEach(x => x.remove());
+    const keep = scrollState(sh.main);
+    applyTerms(P);
+    const oldHub = $('#content > .hub-tabs'), hub = hubTabs(P, sh.view); if (oldHub) oldHub.replaceWith(hub || '');
+    mountView(sh.main, sh.view, sh.arg);
+    restoreScroll(sh.main, keep);
+    if (window.Collab) Collab.decorate();
+  },
+  async render() {
+    if (Router.cleanup) { try { Router.cleanup(); } catch (e) { console.error(e); } Router.cleanup = null; }
+    closeMenu(); $$('.suggest, .palette').forEach(x => x.remove()); Router.shell = null;
     const parts = location.hash.replace(/^#\/?/, '').split('/');
     if (window.Collab) Collab.flush();
     if (Store.P) await Store.flush();
+    if (parts[0] !== 'p') Device.awake('view', false);
     if (parts[0] === 'budgets') { Store.P = null; renderBudgets(); document.title = 'Budgets — StudioBindahh'; return; }
     if (parts[0] === 'contacts') { Store.P = null; renderContacts(); document.title = 'Contacts — StudioBindahh'; return; }
     if (parts[0] === 'p' && Store.projects[parts[1]]) {
@@ -56,10 +86,13 @@ const Router = {
     document.title = (Store.P ? Store.P.title + ' — ' : '') + 'StudioBindahh'; Collab.setView(); Collab.decorate();
   },
 };
-addEventListener('hashchange', () => Router.render());
+/* navigating (including Android's back gesture) closes any open dialog or presentation first */
+const closeOverlays = () => [...document.querySelectorAll('body > .overlay, body > .present')].reverse().forEach(o => o._close ? o._close() : o.remove());
+addEventListener('hashchange', () => { closeOverlays(); Router.render(); });
 
 function renderShell(view, arg) {
   const P = Store.P, app = $('#app'); app.innerHTML = ''; app.style.cssText = '';
+  Device.awake('view', view === 'live');   // the on-set dashboard keeps the tablet's screen on
   const histOn = view !== 'script';
   if (histOn && (!Hist.active || Hist.pid !== P.id)) Hist.reset(P);
   Hist.active = histOn; Hist.pid = P.id;
@@ -74,7 +107,9 @@ function renderShell(view, arg) {
   rail.append(h('div', { class: 'grow' }), h('div', { class: 'nav-sep' }),
     h('a', { class: 'nav-a', href: '#', onclick: e => { e.preventDefault(); openSettings(P); } }, icon('wand', 19), h('span', { class: 't' }, 'Customize tabs')),
     h('a', { class: 'nav-a', href: '#/' }, icon('home', 19), h('span', { class: 't' }, 'All projects')),
-    h('a', { class: 'nav-a', href: '#', onclick: e => { e.preventDefault(); showShortcuts(); } }, icon('keyboard', 19), h('span', { class: 't' }, 'Shortcuts')));
+    h('a', { class: 'nav-a', href: '#', onclick: e => { e.preventDefault(); showShortcuts(); } }, icon('keyboard', 19), h('span', { class: 't' }, 'Shortcuts')),
+    /* on a tablet the rail is icons only; this shows the section names when you want them */
+    h('a', { class: 'nav-a rail-toggle', href: '#', title: 'Show or hide section names', onclick: e => { e.preventDefault(); const w = document.documentElement.dataset.rail === 'wide' ? '' : 'wide'; if (w) document.documentElement.dataset.rail = w; else delete document.documentElement.dataset.rail; try { localStorage.setItem('sb-rail', w); } catch (x) { } } }, icon('right', 19), h('span', { class: 't' }, 'Hide names')));
   const title = h('input', { class: 'ptitle', value: P.title, 'aria-label': 'Project title', oninput: e => { P.title = e.target.value; Store.touch(); document.title = P.title + ' — StudioBindahh'; } });
   const syncBtn = h('button', { class: 'icon-btn', id: 'syncBtn', title: 'Folder sync', 'aria-label': 'Folder sync', onclick: () => Sync.panel() }, icon('cloud'), h('i', { id: 'syncDot', class: 'syncdot', style: { position: 'absolute', margin: '10px 0 0 -6px' } }));
   const top = h('header', { id: 'topbar' }, title, h('span', { class: 'pill accent' }, MODE_LABEL[P.mode] || 'Screenplay'), regionChip(P), h('span', { class: 'grow' }),
@@ -82,7 +117,7 @@ function renderShell(view, arg) {
     histOn ? [hUndo, hRedo] : null,
     h('span', { id: 'savestate' }, h('i'), 'All changes saved'),
     syncBtn, Collab.button(),
-    h('button', { class: 'btn sm', onclick: e => { const o = orphanReport(P); menu(e.currentTarget, [
+    h('button', { class: 'btn sm', title: 'Backup, print & clean up', 'aria-label': 'Backup', onclick: e => { const o = orphanReport(P); menu(e.currentTarget, [
       { label: 'Download this project (.json)', icon: 'download', onClick: () => { download(slug(P.title) + '.studiobindahh.json', JSON.stringify(P), 'application/json'); toast('Backup downloaded'); } },
       { label: 'Download ALL projects (.json)', icon: 'download', onClick: backupAll },
       { label: 'Print script', icon: 'print', onClick: () => printNode(scriptPrintNode(P)) },
@@ -94,10 +129,15 @@ function renderShell(view, arg) {
     ]); } }, icon('download', 15), 'Backup'),
     themeBtn());
   Hist.onchange();
-  const main = h('main', { id: 'main' }), root = h('div', { class: 'view', style: { height: '100%' } });
-  main.append(root);
+  const main = h('main', { id: 'main' });
   app.append(rail, h('div', { id: 'content' }, ...[top, hubTabs(P, view), main].filter(Boolean)));
   Sync.paint();
+  Router.shell = { pid: P.id, view, arg, main, sig: shellSig(P, view) };
+  mountView(main, view, arg);
+}
+function mountView(main, view, arg) {
+  const root = h('div', { class: 'view', style: { height: '100%' } });
+  main.replaceChildren(root);
   try { Router.cleanup = Views[view](root, arg) || null; }
   catch (e) { console.error(e); root.append(h('div', { class: 'page' }, h('div', { class: 'empty' }, h('h3', {}, 'Something went wrong in this view'), h('p', {}, String(e.message || e))))); }
 }
@@ -110,9 +150,9 @@ function renderHome() {
   grid.append(h('button', { class: 'card pcard newcard', onclick: newProjectModal }, h('span', {}, icon('plus', 30)), h('span', {}, 'New project')));
   list.forEach(p => {
     const st = scriptStats(p);
-    grid.append(h('div', { class: 'card pcard ' + p.mode, tabindex: 0, onclick: () => location.hash = `#/p/${p.id}/script`, onkeydown: e => { if (e.key === 'Enter') location.hash = `#/p/${p.id}/script`; } },
+    grid.append(h('div', { class: 'card pcard ' + p.mode, tabindex: 0, role: 'link', 'aria-label': `Open ${p.title || 'Untitled'}`, onclick: () => location.hash = `#/p/${p.id}`, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) location.hash = `#/p/${p.id}`; } },
       h('div', { class: 'cover' }, p.title || 'Untitled'),
-      h('div', { class: 'body' }, h('div', { class: 'row wrap' }, h('span', { class: 'pill accent' }, MODE_LABEL[p.mode] || 'Screenplay'), p.series ? h('span', { class: 'pill' }, `${p.series.name} · ${epCode(p.series)}`) : null, h('span', { class: 'small muted' }, `${st.scenes} ${p.mode === 'av' ? 'segments' : 'scenes'} · ~${st.pages} pp`)),
+      h('div', { class: 'body' }, h('div', { class: 'row wrap' }, h('span', { class: 'pill accent' }, MODE_LABEL[p.mode] || 'Screenplay'), p.series ? h('span', { class: 'pill' }, `${p.series.name} · ${epCode(p.series)}`) : null, h('span', { class: 'small muted' }, `${st.scenes} ${({ av: 'segments', podcast: 'segments', photo: 'setups' })[p.mode] || 'scenes'} · ~${st.pages} pp`)),
         h('div', { class: 'small muted' }, 'Edited ' + new Date(p.updated).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + (p.meta.author ? ' · ' + p.meta.author : '')),
         h('div', { class: 'acts' }, h('button', { class: 'btn sm ghost', onclick: e => { e.stopPropagation(); duplicateProject(p); } }, icon('copy', 14), 'Duplicate'),
           h('button', { class: 'btn sm ghost', onclick: e => { e.stopPropagation(); download(slug(p.title) + '.studiobindahh.json', JSON.stringify(p), 'application/json'); } }, icon('download', 14), 'Backup'),
@@ -277,8 +317,8 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------------- boot ---------------- */
-addEventListener('pagehide', () => Store.flush());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') Store.flush(); });
+addEventListener('pagehide', () => Store.flush(true));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') Store.flush(true); });
 (async function boot() {
   await Store.init(); await Contacts.load(); await loadPrefs(); applyTerms(null); Device.init();
   Router.render();

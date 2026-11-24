@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#5b4bdb">
+<meta name="theme-color" content="#ffffff" id="themeColor">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="StudioBindahh">
@@ -18,7 +18,10 @@
 <script>
   // apply theme before first paint to avoid a flash
   try { var t = localStorage.getItem('sb-theme'); if (t && t !== 'auto') document.documentElement.dataset.theme = t; } catch (e) {}
+  // the Android status bar / title bar matches the app's surface colour
+  try { var dk = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; document.getElementById('themeColor').content = dk ? '#171b22' : '#ffffff'; } catch (e) {}
   // touch devices (tablets) get bigger targets from the very first paint
+  try { if (localStorage.getItem('sb-rail') === 'wide') document.documentElement.dataset.rail = 'wide'; } catch (e) {}
   try { var tm = localStorage.getItem('sb-touch') || 'auto'; if (tm === 'on' || (tm === 'auto' && matchMedia('(pointer: coarse)').matches)) document.documentElement.dataset.touch = '1'; } catch (e) {}
 </script>
 </head>
@@ -28,6 +31,7 @@
 <div id="toasts"></div>
 
 <script src="js/core.js"></script>
+<script src="js/dnd.js"></script>
 <script src="js/layout.js"></script>
 <script src="js/history.js"></script>
 <script src="js/elements.js"></script>
@@ -68,6 +72,7 @@
 <script src="js/photo.js"></script>
 <script src="js/photo2.js"></script>
 <script src="js/podcast.js"></script>
+<script src="js/livedesk.js"></script>
 <script src="js/live.js"></script>
 <script src="js/crypto.js"></script>
 <script src="js/diff.js"></script>

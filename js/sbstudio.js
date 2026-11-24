@@ -26,15 +26,18 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
   let sel = null, tool = 'select', camMode = 'a', onion = false, thirds = false, space = false, dragging = null, hover = null, tT = 0, playing = null, flat = null, shapePrev = null;
   let ink = SB_INK[0], size = 6, fillShape = false, dirty = false; const hist = [], redo = [];
   const view = { s: 1, cx: SBR.WORLD_W / 2, cy: WH / 2 };
+  const initial = JSON.stringify(fr), changed = () => JSON.stringify(fr) !== initial;   // Cancel only asks when something really changed
   const layers = () => fr.layers, byId = id => fr.layers.find(l => l.id === id), cur = () => byId(sel);
   const camQ = k => SBR.camQuad(fr.cam[k] || SBR.defaultCam(ar), ar);
   const dpr = Math.min(2, window.devicePixelRatio || 1);
 
   /* ---------- history ---------- */
   const snap = () => ({ layers: D.clone(fr.layers), cam: D.clone(fr.cam), sel });
-  const pushHist = () => { hist.push(snap()); if (hist.length > 60) hist.shift(); redo.length = 0; dirty = true; };
+  const histBtns = [];   // every undo / redo button, enabled only when there is something to undo / redo
+  const histSync = () => histBtns.forEach(([b, r]) => { b.disabled = !(r ? redo.length : hist.length); });
+  const pushHist = () => { hist.push(snap()); if (hist.length > 60) hist.shift(); redo.length = 0; dirty = true; histSync(); };
   function restore(s) { fr.layers.length = 0; fr.layers.push(...D.clone(s.layers)); fr.cam = D.clone(s.cam); sel = s.sel && byId(s.sel) ? s.sel : null; live.clear(); fr.layers.forEach(l => { if (l.kind === 'draw') liveOf(l); }); flat = null; panel(); render(); }
-  const undo = () => { if (!hist.length) return; redo.push(snap()); restore(hist.pop()); }, redoIt = () => { if (!redo.length) return; hist.push(snap()); restore(redo.pop()); };
+  const undo = () => { if (!hist.length) return; redo.push(snap()); restore(hist.pop()); histSync(); }, redoIt = () => { if (!redo.length) return; hist.push(snap()); restore(redo.pop()); histSync(); };
 
   /* ---------- drawing layers keep a live canvas ---------- */
   function liveOf(l) {
@@ -69,7 +72,9 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
     // camera outlines
     const outline = (k, dashed) => { const p = quadPath(camQ(k), toS); ctx.save(); ctx.lineWidth = camMode === k ? 2.5 : 1.5; ctx.strokeStyle = k === 'a' ? '#ffd24a' : '#5ec2ff'; if (dashed) ctx.setLineDash([7, 5]); ctx.stroke(); ctx.fillStyle = ctx.strokeStyle; ctx.font = '700 11px sans-serif'; ctx.fillText(k === 'a' ? 'CAMERA A (start)' : 'CAMERA B (end)', p[0][0] + 4, p[0][1] - 5); ctx.restore(); return p; };
     outline('a', false); if (cams.b) { outline('b', true); const ca = SBR.center(camQ('a')), cb = SBR.center(camQ('b')), pa = toS(ca[0], ca[1]), pb = toS(cb[0], cb[1]); ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); ctx.stroke(); ctx.restore(); if (playing || tT > 0) { const c = SBR.camAt(cams, tT, ar), p = SBR.camQuad(c, ar).map(pt => toS(pt[0], pt[1])); ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]); p.slice(1).forEach(x => ctx.lineTo(x[0], x[1])); ctx.closePath(); ctx.stroke(); ctx.restore(); } }
-    if (thirds) { const q = camQ(camMode === 'b' && cams.b ? 'b' : 'a'), H0 = SBR.homography(q); ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1; [1 / 3, 2 / 3].forEach(t => { [[t, 0, t, 1], [0, t, 1, t]].forEach(([a, bb, c, d]) => { const p0 = toS(...H0.fwd(a, bb)), p1 = toS(...H0.fwd(c, d)); ctx.beginPath(); ctx.moveTo(...p0); ctx.lineTo(...p1); ctx.stroke(); }); }); ctx.restore(); }
+    if (thirds) { const q = camQ(camMode === 'b' && cams.b ? 'b' : 'a'), H0 = SBR.homography(q); const lines = []; [1 / 3, 2 / 3].forEach(t => { [[t, 0, t, 1], [0, t, 1, t]].forEach(([a, bb, c, d]) => lines.push([toS(...H0.fwd(a, bb)), toS(...H0.fwd(c, d))])); });
+      /* a dark line with a light core reads on white paper, dark photos and everything between */
+      ctx.save(); [['rgba(0,0,0,.45)', 3], ['rgba(255,255,255,.95)', 1]].forEach(([col, lw]) => { ctx.strokeStyle = col; ctx.lineWidth = lw; lines.forEach(([p0, p1]) => { ctx.beginPath(); ctx.moveTo(...p0); ctx.lineTo(...p1); ctx.stroke(); }); }); ctx.restore(); }
     handles(ac);
     if (shapePrev) { ctx.save(); ctx.strokeStyle = ink; ctx.lineWidth = Math.max(1, size * view.s); ctx.lineCap = 'round'; const [a, bb] = shapePrev.pts; shapeStroke(ctx, shapePrev.kind, toS(...a), toS(...bb), fillShape ? ink : null); ctx.restore(); }
   }
@@ -112,25 +117,28 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
   }
   const DRAWT = ['pen', 'eraser', 'line', 'arrow', 'rect', 'ellipse'];
   function abortDrag() { const d = dragging; if (!d) return; if (d.kind === 'ink' || d.kind === 'shape') { shapePrev = null; if (hist.length) restore(hist.pop()); } else if (d.L && d.q0) { d.L.quad = d.q0; } dragging = null; render(); }
-  function pinchStart() { const [a, b2] = [...touches.values()]; abortDrag(); pinch = { d0: Math.hypot(a.x - b2.x, a.y - b2.y) || 1, m0: [(a.x + b2.x) / 2, (a.y + b2.y) / 2], s0: view.s, c0: toW((a.x + b2.x) / 2, (a.y + b2.y) / 2) }; }
-  function pinchMove() { const [a, b2] = [...touches.values()]; if (!pinch || !b2) return; const d = Math.hypot(a.x - b2.x, a.y - b2.y) || 1, m = [(a.x + b2.x) / 2, (a.y + b2.y) / 2]; view.s = Math.max(.05, Math.min(12, pinch.s0 * d / pinch.d0)); view.cx = pinch.c0[0] - (m[0] - W() / 2) / view.s; view.cy = pinch.c0[1] - (m[1] - H() / 2) / view.s; zoomLbl(); render(); }
+  let tapG = null;   // a quick multi-finger tap in progress: { n, t, moved }
+  let touchHist = null;   // history as it was before the first finger landed, so a pinch or multi-finger tap leaves no trace in undo / redo
+  function pinchStart() { const [a, b2] = [...touches.values()]; abortDrag(); if (touchHist) { hist.splice(0, hist.length, ...touchHist.hist); redo.splice(0, redo.length, ...touchHist.redo); histSync(); } pinch = { d0: Math.hypot(a.x - b2.x, a.y - b2.y) || 1, m0: [(a.x + b2.x) / 2, (a.y + b2.y) / 2], s0: view.s, c0: toW((a.x + b2.x) / 2, (a.y + b2.y) / 2) }; }
+  function pinchMove() { const [a, b2] = [...touches.values()]; if (!pinch || !b2) return; const d = Math.hypot(a.x - b2.x, a.y - b2.y) || 1, m = [(a.x + b2.x) / 2, (a.y + b2.y) / 2]; view.s = Math.max(.05, Math.min(12, pinch.s0 * d / pinch.d0)); if (tapG && Math.hypot(m[0] - pinch.m0[0], m[1] - pinch.m0[1]) > 18) tapG.moved = true; view.cx = pinch.c0[0] - (m[0] - W() / 2) / view.s; view.cy = pinch.c0[1] - (m[1] - H() / 2) / view.s; zoomLbl(); render(); }
   const touchOnly = e => e.pointerType === 'touch', fromPen = e => e.pointerType === 'pen';
   cv.addEventListener('pointerdown', e => {
     if (fromPen(e)) { penSeen = true; penErase = !!(e.buttons & 32) || e.button === 5; }
-    if (touchOnly(e)) { const r = cv.getBoundingClientRect(); touches.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top }); if (touches.size === 2) { try { cv.setPointerCapture(e.pointerId); } catch (x) { } pinchStart(); e.stopImmediatePropagation(); return; } if (touches.size > 2) { e.stopImmediatePropagation(); return; }
+    if (touchOnly(e)) { const r = cv.getBoundingClientRect(); touches.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top }); if (touches.size === 1) touchHist = { hist: hist.slice(), redo: redo.slice() }; if (touches.size === 2) { try { cv.setPointerCapture(e.pointerId); } catch (x) { } pinchStart(); tapG = { n: 2, t: performance.now(), moved: false }; e.stopImmediatePropagation(); return; } if (touches.size > 2) { if (tapG) tapG.n = Math.max(tapG.n, touches.size); e.stopImmediatePropagation(); return; }
       if (penSeen && DRAWT.includes(tool)) { /* a pen has been used: fingers pan instead of leaving marks (palm rejection) */ const p0 = ptr(e); try { cv.setPointerCapture(e.pointerId); } catch (x) { } dragging = { kind: 'pan', sx: p0.sx, sy: p0.sy, cx: view.cx, cy: view.cy }; e.stopImmediatePropagation(); return; } }
   }, true);
-  cv.addEventListener('pointermove', e => { if (touchOnly(e) && touches.has(e.pointerId)) { const r = cv.getBoundingClientRect(); touches.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top }); if (pinch) { pinchMove(); e.stopImmediatePropagation(); } } }, true);
-  const touchEnd = e => { if (touches.has(e.pointerId)) { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; if (e.pointerType === 'touch' && touches.size === 0 && penErase) penErase = false; } };
+  cv.addEventListener('pointermove', e => { if (touchOnly(e) && touches.has(e.pointerId)) { const r = cv.getBoundingClientRect(); touches.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top }); if (pinch) { pinchMove(); if (tapG && Math.abs(view.s / pinch.s0 - 1) > .06) tapG.moved = true; e.stopImmediatePropagation(); } } }, true);
+  const touchEnd = e => { if (touches.has(e.pointerId)) { touches.delete(e.pointerId); if (touches.size < 2) pinch = null;
+    if (touches.size === 0 && tapG) { const g = tapG; tapG = null; if (!g.moved && e.type === 'pointerup' && performance.now() - g.t < 350) { if (g.n === 2) undo(); else if (g.n === 3) redoIt(); } } if (e.pointerType === 'touch' && touches.size === 0 && penErase) penErase = false; } };
   cv.addEventListener('pointerup', touchEnd, true); cv.addEventListener('pointercancel', touchEnd, true);
   cv.addEventListener('pointerdown', e => {
     cv.focus(); const p = ptr(e); try { cv.setPointerCapture(e.pointerId); } catch (x) { }
     if (e.button === 1 || space || tool === 'hand') { dragging = { kind: 'pan', sx: p.sx, sy: p.sy, cx: view.cx, cy: view.cy }; cv.style.cursor = 'grabbing'; return; }
-    if (['pen', 'eraser'].includes(tool) || (penErase && fromPen(e))) { const l = drawTarget(); pushHist(); dragging = { kind: 'ink', l, last: p.w, erase: penErase && fromPen(e) }; const g = live.get(l.id).getContext('2d'), A = toBitmap(l, p.w), k = brushPx(l); g.save(); const er = tool === 'eraser' || dragging.erase; g.globalCompositeOperation = er ? 'destination-out' : 'source-over'; g.fillStyle = ink; g.beginPath(); g.arc(A[0], A[1], Math.max(.5, (er ? size * 2.5 : size) * k * p.pr) / 2, 0, 7); g.fill(); g.restore(); render(); return; }
-    if (['line', 'arrow', 'rect', 'ellipse'].includes(tool)) { const l = drawTarget(); pushHist(); dragging = { kind: 'shape', l, a: p.w }; shapePrev = { kind: tool, pts: [p.w, p.w] }; return; }
+    if (['pen', 'eraser'].includes(tool) || (penErase && fromPen(e))) { const n0 = hist.length, l = drawTarget(); if (hist.length === n0) pushHist(); dragging = { kind: 'ink', l, last: p.w, erase: penErase && fromPen(e) }; const g = live.get(l.id).getContext('2d'), A = toBitmap(l, p.w), k = brushPx(l); g.save(); const er = tool === 'eraser' || dragging.erase; g.globalCompositeOperation = er ? 'destination-out' : 'source-over'; g.fillStyle = ink; g.beginPath(); g.arc(A[0], A[1], Math.max(.5, (er ? size * 2.5 : size) * k * p.pr) / 2, 0, 7); g.fill(); g.restore(); render(); return; }
+    if (['line', 'arrow', 'rect', 'ellipse'].includes(tool)) { const n0 = hist.length, l = drawTarget(); if (hist.length === n0) pushHist(); dragging = { kind: 'shape', l, a: p.w }; shapePrev = { kind: tool, pts: [p.w, p.w] }; return; }
     if (tool === 'text') { addText(p.w); return; }
     const hd = hitHandle(p.sx, p.sy);
-    if (tool === 'camera') { const k = camMode === 'b' && fr.cam.b ? 'b' : 'a'; pushHist(); const cam = fr.cam[k]; if (hd) { dragging = { kind: hd.id === 'crot' ? 'camrot' : 'camscale', k, cam: { ...cam }, p0: p.w, h0: hd.id }; } else if (SBR.pointInQuad(camQ(k), p.w[0], p.w[1])) dragging = { kind: 'cammove', k, cam: { ...cam }, p0: p.w }; else hist.pop(); return; }
+    if (tool === 'camera') { const k = camMode === 'b' && fr.cam.b ? 'b' : 'a'; pushHist(); const cam = fr.cam[k]; if (hd) { dragging = { kind: hd.id === 'crot' ? 'camrot' : 'camscale', k, cam: { ...cam }, p0: p.w, h0: hd.id, undoable: true }; } else if (SBR.pointInQuad(camQ(k), p.w[0], p.w[1])) dragging = { kind: 'cammove', k, cam: { ...cam }, p0: p.w, undoable: true }; else hist.pop(); return; }
     if (hd && cur()) {
       pushHist(); const L = cur(), q0 = L.quad.map(x => x.slice()), c = SBR.center(q0);
       if (tool === 'distort') dragging = { kind: 'corner', L, i: +hd.id.slice(1) };
@@ -138,10 +146,10 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
       else if (hd.id === 'rot') dragging = { kind: 'rot', L, q0, c, a0: Math.atan2(p.w[1] - c[1], p.w[0] - c[0]) };
       else if (hd.id[0] === 's') dragging = { kind: 'scale', L, q0, i: +hd.id.slice(1), p0: p.w };
       else dragging = { kind: 'edge', L, q0, i: +hd.id.slice(1), p0: p.w };
-      flat = null; return;
+      dragging.undoable = true; flat = null; return;
     }
     const L = hitLayer(p.w[0], p.w[1]);
-    if (L) { sel = L.id; panel(); pushHist(); dragging = { kind: 'move', L, q0: L.quad.map(x => x.slice()), p0: p.w }; flat = null; render(); } else if (tool === 'select' || tool === 'distort' || tool === 'crop') { sel = null; panel(); render(); }
+    if (L) { sel = L.id; panel(); pushHist(); dragging = { kind: 'move', L, q0: L.quad.map(x => x.slice()), p0: p.w, undoable: true }; flat = null; render(); } else if (tool === 'select' || tool === 'distort' || tool === 'crop') { sel = null; panel(); render(); }
   });
   cv.addEventListener('pointermove', e => {
     const p = ptr(e), d = dragging;
@@ -149,7 +157,7 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
     if (d.kind === 'pan') { view.cx = d.cx - (p.sx - d.sx) / view.s; view.cy = d.cy - (p.sy - d.sy) / view.s; render(); return; }
     if (d.kind === 'ink') { strokeTo(d.l, d.last, p.w, p.pr, null, d.erase); d.last = p.w; render(); return; }
     if (d.kind === 'shape') { shapePrev = { kind: tool, pts: [d.a, e.shiftKey && (tool === 'rect' || tool === 'ellipse') ? [d.a[0] + Math.sign(p.w[0] - d.a[0]) * Math.max(Math.abs(p.w[0] - d.a[0]), Math.abs(p.w[1] - d.a[1])), d.a[1] + Math.sign(p.w[1] - d.a[1]) * Math.max(Math.abs(p.w[0] - d.a[0]), Math.abs(p.w[1] - d.a[1]))] : p.w] }; render(); return; }
-    const L = d.L; dirty = true;
+    const L = d.L; dirty = true; d.moved = true;
     if (d.kind === 'move') { L.quad = SBR.translate(d.q0, p.w[0] - d.p0[0], p.w[1] - d.p0[1]); }
     else if (d.kind === 'corner') { L.quad = L.quad.map((x, i) => i === d.i ? [p.w[0], p.w[1]] : x); }
     else if (d.kind === 'rot') { let da = Math.atan2(p.w[1] - d.c[1], p.w[0] - d.c[0]) - d.a0; if (e.shiftKey) da = Math.round(da / (Math.PI / 12)) * (Math.PI / 12); L.quad = SBR.rotateAbout(d.q0, d.c[0], d.c[1], da); }
@@ -164,6 +172,8 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
   const endDrag = e => {
     const d = dragging; dragging = null; cv.style.cursor = '';
     if (!d) return;
+    if (d.undoable && !d.moved) hist.pop();   // a tap that only selected something leaves no undo step
+    histSync();
     if (d.kind === 'ink') { commit(d.l); thumbs(); }
     else if (d.kind === 'shape') { const p = ptr(e), kind = tool; strokeTo(d.l, d.a, shapePrev ? shapePrev.pts[1] : p.w, 1, kind); shapePrev = null; commit(d.l); thumbs(); }
     else if (d.kind === 'crop') { }
@@ -204,7 +214,8 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
   const side = h('div', { class: 'sbs-side' }), toolsEl = h('div', { class: 'sbs-tools' }), opts = h('div', { class: 'sbs-opts' }), zl = h('span', { class: 'sbs-zl' });
   const zoomLbl = () => { zl.textContent = Math.round(view.s * 100 / (W() / (SBR.WORLD_W)) ) + '%'; };
   const TOOLS = [['select', '↖', 'Select & transform (V)', 'v'], ['distort', '◇', '3D distort — drag the corners (D)', 'd'], ['crop', '⌗', 'Crop (C)', 'c'], ['pen', 'pen', 'Pen (P)', 'p'], ['eraser', 'eraser', 'Eraser (E)', 'e'], ['line', '╱', 'Line (L)', 'l'], ['arrow', '➔', 'Arrow (A)', 'a'], ['rect', '▭', 'Rectangle (R)', 'r'], ['ellipse', '◯', 'Ellipse (O)', 'o'], ['text', 'T', 'Text (T)', 't'], ['hand', '✋', 'Pan the pasteboard (H, or hold Space)', 'h'], ['camera', 'camera', 'Camera — move, zoom and rotate the shot (K)', 'k']];
-  function toolSync() { toolsEl.replaceChildren(...TOOLS.map(([k, g, t]) => h('button', { class: 'sbs-tool' + (tool === k ? ' on' : ''), title: t, onclick: () => { tool = k; if (k === 'camera') { } toolSync(); optsDraw(); render(); } }, g.length > 2 ? icon(g, 17) : g))); optsDraw(); }
+  let toolHist = null;
+  function toolSync() { toolHist = toolHist || [histBtn(false, 'sbs-tool sbs-hist'), histBtn(true, 'sbs-tool sbs-hist')]; toolsEl.replaceChildren(...TOOLS.map(([k, g, t]) => h('button', { class: 'sbs-tool' + (tool === k ? ' on' : ''), title: t, 'aria-label': t, onclick: () => { tool = k; toolSync(); optsDraw(); render(); } }, g.length > 2 ? icon(g, 17) : g)), h('span', { class: 'sbs-hist-sep' }), ...toolHist); optsDraw(); histSync(); }
   function optsDraw() {
     const drawing = ['pen', 'eraser', 'line', 'arrow', 'rect', 'ellipse', 'text'].includes(tool);
     opts.replaceChildren(drawing ? h('div', { class: 'row', style: { gap: '8px' } }, ...SB_INK.map(c => h('button', { class: 'sw' + (c === ink ? ' on' : ''), style: { background: c, border: c === '#ffffff' ? '1px solid #999' : '' }, title: c, onclick: () => { ink = c; const l = cur(); if (l && l.kind === 'text') { pushHist(); l.text.color = c; retext(l); } optsDraw(); render(); } })), h('input', { type: 'color', value: ink, title: 'Any colour', style: { width: '26px', height: '26px', padding: 0, border: 0, background: 'none' }, oninput: e => { ink = e.target.value; render(); } }),
@@ -261,13 +272,19 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
     if (closing) return; closing = true; if (playing) cancelAnimationFrame(playing); document.removeEventListener('keydown', onKey, true); document.removeEventListener('keyup', onKeyUp, true); document.removeEventListener('paste', onPaste, true); window.removeEventListener('resize', resize); ro && ro.disconnect(); SBR.setOnLoad(null); ov.remove();
     if (save) { fr.layers.forEach(l => { if (l.kind === 'draw') commit(l); }); finish(); }
   }
+  async function cancel() {
+    if (document.querySelector('body > .overlay')) return;                       // a question is already open
+    if (changed() && !(await confirmBox('Discard your changes to this frame?', 'Discard', 'Unsaved changes'))) return;
+    close(false);
+  }
   async function finish() { const out = D.clone(fr); delete out.base; delete out.ink; out.base = ''; out.ink = ''; out.sceneId = out.sceneId || ''; const c = await flatFrame(out, ar, 1000, 0); out.img = c.toDataURL('image/jpeg', .86); onSave(out, !!UI.sbMakeShot); UI.sbMakeShot = false; }
   async function exportPng() { const c = await flatFrame(fr, ar, 1920); c.toBlob(bl => { const a = document.createElement('a'); a.href = URL.createObjectURL(bl); a.download = 'storyboard-frame.png'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }); }
+  function histBtn(isRedo, cls = '') { const b = ibtn(isRedo ? 'redo' : 'undo', isRedo ? 'Redo (Ctrl+Y, or tap with three fingers)' : 'Undo (Ctrl+Z, or tap with two fingers)', isRedo ? redoIt : undo, cls); histBtns.push([b, isRedo]); return b; }
   const top = h('div', { class: 'sbs-top' }, h('b', {}, 'Frame studio'), h('span', { class: 'small muted' }, 'Your pasteboard is larger than the frame — park reference images off to the side and reframe with the camera.'), h('span', { class: 'grow' }),
     h('button', { class: 'btn sm sbs-sidebtn', title: 'Layers, camera and frame details', onclick: () => { ov.classList.toggle('side-open'); setTimeout(() => { resize(); }, 30); } }, icon('layers', 14), 'Panels'),
-    ibtn('undo', 'Undo (Ctrl+Z)', undo), ibtn('redo', 'Redo (Ctrl+Y)', redoIt), h('span', { class: 'sep' }), ibtn('minus', 'Zoom out', () => { view.s = Math.max(.05, view.s / 1.25); zoomLbl(); render(); }), zl, ibtn('plus', 'Zoom in', () => { view.s = Math.min(12, view.s * 1.25); zoomLbl(); render(); }), h('button', { class: 'btn sm', onclick: () => { fit(); zoomLbl(); } }, 'Fit'),
+    histBtn(false), histBtn(true), h('span', { class: 'sep' }), ibtn('minus', 'Zoom out', () => { view.s = Math.max(.05, view.s / 1.25); zoomLbl(); render(); }), zl, ibtn('plus', 'Zoom in', () => { view.s = Math.min(12, view.s * 1.25); zoomLbl(); render(); }), h('button', { class: 'btn sm', onclick: () => { fit(); zoomLbl(); } }, 'Fit'),
     h('button', { class: 'btn sm' + (onion ? ' active' : ''), title: 'Ghost the previous frame', onclick: e => { onion = !onion; e.currentTarget.classList.toggle('active', onion); if (onion) loadOnion(); render(); } }, 'Onion skin'), h('button', { class: 'btn sm', onclick: e => { thirds = !thirds; e.currentTarget.classList.toggle('active', thirds); render(); } }, icon('grid', 14), 'Thirds'),
-    h('button', { class: 'btn sm', onclick: exportPng }, icon('download', 14), 'PNG'), h('span', { class: 'sep' }), h('button', { class: 'btn', onclick: async () => { if (dirty && !(await confirmBox('Discard your changes to this frame?', 'Discard'))) return; close(false); } }, 'Cancel'), h('button', { class: 'btn primary', onclick: () => close(true) }, icon('check', 15), 'Save frame'));
+    h('button', { class: 'btn sm', onclick: exportPng }, icon('download', 14), 'PNG'), h('span', { class: 'sep' }), h('button', { class: 'btn', onclick: cancel }, 'Cancel'), h('button', { class: 'btn primary', onclick: () => close(true) }, icon('check', 15), 'Save frame'));
   ov = h('div', { class: 'sbs' }, top, opts, h('div', { class: 'sbs-body' }, toolsEl, stage, side)); document.body.append(ov);
   const ro = window.ResizeObserver ? new ResizeObserver(() => resize()) : null; ro && ro.observe(stage); window.addEventListener('resize', resize);
   stage.addEventListener('dragover', e => e.preventDefault()); stage.addEventListener('drop', async e => { e.preventDefault(); for (const f of e.dataTransfer.files) if (/^image\//.test(f.type)) await addImage(f); });
@@ -277,7 +294,7 @@ function openFrameStudio(P, b, { ar, scenes, onSave }) {
     const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey; e.stopPropagation();
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redoIt() : undo(); } else if (mod && k === 'y') { e.preventDefault(); redoIt(); } else if (mod && k === 'c') { e.preventDefault(); copyLayer(false); } else if (mod && k === 'x') { e.preventDefault(); copyLayer(true); } else if (mod && k === 'd') { e.preventDefault(); dup(); } else if (mod && k === 'v') { /* handled by the paste event */ } else if (mod && k === 's') { e.preventDefault(); close(true); }
     else if (k === ' ') { e.preventDefault(); space = true; cv.style.cursor = 'grab'; } else if (k === 'delete' || k === 'backspace') { e.preventDefault(); del(); } else if (k === '[') order(-1); else if (k === ']') order(1);
-    else if (k === 'escape') { if (dirty) confirmBox('Discard your changes to this frame?', 'Discard').then(y => y && close(false)); else close(false); }
+    else if (k === 'escape') cancel();
     else if (k === '=' || k === '+') { view.s = Math.min(12, view.s * 1.2); zoomLbl(); render(); } else if (k === '-') { view.s = Math.max(.05, view.s / 1.2); zoomLbl(); render(); } else if (k === '0') { fit(); zoomLbl(); }
     else if (k.startsWith('arrow') && cur() && !mod) { e.preventDefault(); const st = e.shiftKey ? 10 : 1, dx = k === 'arrowleft' ? -st : k === 'arrowright' ? st : 0, dy = k === 'arrowup' ? -st : k === 'arrowdown' ? st : 0; pushHist(); cur().quad = SBR.translate(cur().quad, dx, dy); panel(); render(); }
     else if (!mod) { const t = TOOLS.find(x => x[3] === k); if (t) { tool = t[0]; toolSync(); render(); } }

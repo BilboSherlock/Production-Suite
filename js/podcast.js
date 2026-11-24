@@ -119,8 +119,6 @@ const POD_TEMPLATES = {
 /* ---------------------------------------------------------------
    Safe Time & Duration Helpers
    --------------------------------------------------------------- */
-const podMsMin = ms => { const d = new Date(ms); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
-const podFromMin = n => { n = ((Math.round(n) % 1440) + 1440) % 1440; return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); };
 
 /* ---------------------------------------------------------------
    Studio Web Audio Synthesizer (Zero-dependency soundboard)
@@ -293,7 +291,6 @@ const PodTimer = {
   activeSegIdx: 0,
   segStartSec: 0,
   markers: [],
-  issues: [],
   checkedBullets: new Set(),
   checkedQuestions: new Set(),
   preflight: { levels: false, backup: false, room: false, headphones: false, notify: false, water: false },
@@ -330,8 +327,7 @@ const PodTimer = {
     PodTimer.elapsedSec = 0;
     PodTimer.activeSegIdx = 0;
     PodTimer.segStartSec = 0;
-    PodTimer.markers = [];
-    PodTimer.issues = [];
+    PodTimer.markers.length = 0;
     PodTimer.checkedBullets.clear();
     PodTimer.checkedQuestions.clear();
     PodTimer.notify();
@@ -340,11 +336,6 @@ const PodTimer = {
     PodTimer.markers.unshift({ time: PodTimer.elapsedSec, label: label || `Marker ${PodTimer.markers.length + 1}`, kind });
     PodTimer.notify();
   },
-  addIssue(msg, cat = 'Audio', sev = 'Medium') {
-    PodTimer.issues.unshift({ time: PodTimer.elapsedSec, msg, cat, sev, resolved: false });
-    PodTimer.addMarker(`[${sev}] ${cat}: ${msg}`, 'issue');
-    PodTimer.notify();
-  }
 };
 
 /* ===============================================================
@@ -1466,1162 +1457,227 @@ async function createPodcastSample() {
 }
 
 /* ===============================================================
-   Live Podcast Studio Dashboard (Views.live adapter for Podcasts)
-   Full-screen on-air prompter, live pacing clock, interactive
-   talking points, guest interview assistant, sponsor ad prompter,
-   instant audio editor markers, studio soundboard & VU meter.
+   Live recording desk — built on the live desk (livedesk.js), so it
+   reads and behaves like every other live dashboard. Everything that
+   happens in a session (the recording clock, editor markers, problems,
+   check-in, pre-flight) is saved with the project, so a reload or a
+   sleeping tablet never loses a take.
    =============================================================== */
+const POD_SESSION = { id: 'podcast' };
+const POD_MARKS = [['retake', '🔖 Retake', 'Retake / line flub'], ['quote', '⭐ Clip', 'Highlight / golden quote'], ['cut', '✂ Cut', 'Cut point / dead air'], ['glitch', '⚠ Glitch', 'Audio glitch / mic pop']];
+const POD_PREFLIGHT = [['levels', 'Mic input levels checked (−12 dB peaks)'], ['backup', 'Backup / 32-bit float recording running'], ['room', 'HVAC, fans & room noise off'], ['headphones', 'Zero-latency headphone monitor'], ['notify', 'Phone & computer notifications off'], ['water', 'Water at hand']];
+
+/* bring the recording clock back from the saved session (after a reload or another project) */
+function podHydrate(P, L) {
+  L.markers = L.markers || []; L.preflight = L.preflight || {}; L.rec = L.rec || {};
+  if (PodTimer.pid === P.id) { PodTimer.markers = L.markers; return; }
+  PodTimer.pause(); PodTimer.pid = P.id; PodTimer.markers = L.markers; PodTimer.preflight = L.preflight;
+  const r = L.rec; PodTimer.activeSegIdx = r.seg || 0; PodTimer.segStartSec = r.segStart || 0;
+  PodTimer.elapsedSec = r.running && r.startTime ? Math.floor((Date.now() - r.startTime) / 1000) : (r.elapsed || 0);
+  if (r.running) PodTimer.start();
+}
+const podSave = L => { L.rec = { running: PodTimer.running, startTime: PodTimer.startTime, elapsed: PodTimer.elapsedSec, seg: PodTimer.activeSegIdx, segStart: PodTimer.segStartSec }; };
+
 function renderPodcastLive(root, P) {
-  const pd = POD(P);
-  root.innerHTML = '';
+  const pd = POD(P), L = liveOf(P, POD_SESSION); podHydrate(P, L);
+  const wrap = h('div', { class: 'live ld pod-live' + (UI.liveTV ? ' tv' : '') }); root.append(wrap);
+  const flash = () => { podSave(L); Store.touch(); draw(); };
+  const mark = (label, kind = 'marker') => { PodTimer.addMarker(label, kind); PodAudio.playPing(); };
+  const askMarker = async (pre = '') => { const l = await promptBox('Editor marker', 'What happened at this moment?', pre); if (l) { mark(l, 'custom'); flash(); } };
+  const cx = { P, L, key: 'pod', flash, redraw: () => draw(), date: todayISO(), itemWord: 'Segment', issueCats: ['Audio', 'Room', 'Connection', 'Guest', 'Equipment', 'Content', 'Other'],
+    quickIssues: [['Mic clipping', 'Audio', 'High'], ['Background noise', 'Room', 'Medium'], ['Guest connection drop', 'Connection', 'High']], stamp: () => PodTimer.elapsedSec };
 
-  const wrap = h('div', { class: 'live pod-live' + (UI.liveTV ? ' tv' : '') });
-  root.append(wrap);
-
-  let timer = null;
-  let scrollInterval = null;
-  const flash = () => { Store.touch(); draw(); };
-
+  const acts = {};   // the current segment's actions, for the keyboard
   function draw() {
-    if (!pd.rundown.length) {
-      wrap.innerHTML = '';
-      wrap.append(h('div', { class: 'page', style: { maxWidth: '700px', margin: '40px auto' } },
-        h('div', { class: 'card', style: { padding: '28px', textAlign: 'center' } },
-          h('span', { class: 'ico', style: { color: 'var(--accent)', marginBottom: '12px' } }, icon('cue', 36)),
-          h('h3', {}, 'No Rundown Planned for this Episode'),
-          h('p', { class: 'muted' }, 'The Live Podcast Dashboard guides your recording session using your episode rundown, guest prep, sponsor copy, and talking points.'),
-          h('div', { class: 'row', style: { justifyContent: 'center', gap: '10px', marginTop: '16px' } },
-            h('button', { class: 'btn primary', onclick: () => { applyTemplate('interview', P, pd); draw(); } }, 'Load standard interview template'),
-            h('a', { class: 'btn', href: `#/p/${P.id}/rundown` }, 'Open rundown planner')))));
+    const rundown = pd.rundown;
+    if (!rundown.length) {
+      morph(wrap, h('div', { class: 'ld-card empty ld-start' }, icon('cue', 32), h('h3', {}, 'No rundown for this episode yet'),
+        h('p', { class: 'muted' }, 'The live desk runs your recording from the episode rundown: segments and timing, talking points, guest prep, sponsor reads and editor markers.'),
+        h('div', { class: 'ld-btns' }, h('button', { class: 'btn primary', onclick: () => { applyTemplate('interview', P, pd); flash(); } }, 'Use the interview template'), h('a', { class: 'btn', href: `#/p/${P.id}/rundown` }, 'Open the rundown planner'))));
       return;
     }
+    const curIdx = PodTimer.activeSegIdx = Math.min(PodTimer.activeSegIdx, rundown.length - 1), cur = rundown[curIdx], next = rundown.slice(curIdx + 1).find(s => s.status !== 'Cut') || null;
+    let cum = 0; const tm = rundown.map(s => { const start = cum, dur = s.status === 'Cut' ? 0 : parseDurMin(s.dur); cum += dur; return { start, dur }; }), totalMin = cum;
+    const live = PodTimer.running, begun = PodTimer.elapsedSec > 0;
+    const segEl = Math.max(0, PodTimer.elapsedSec - PodTimer.segStartSec), segTarget = Math.max(30, parseDurMin(cur.dur) * 60), segOver = segEl - segTarget;
+    const plannedAt = tm[curIdx].start * 60 + Math.min(segEl, segTarget), diff = PodTimer.elapsedSec - plannedAt;
+    const pace = !begun ? ['Ready', 'muted'] : Math.abs(diff) < 30 ? ['On time', 'good'] : diff > 0 ? [`Behind ${fmtTimeSec(diff)}`, diff > 180 ? 'bad' : 'warn'] : [`Ahead ${fmtTimeSec(-diff)}`, 'info'];
+    const remainMin = tm.slice(curIdx + 1).reduce((a, x) => a + x.dur, 0) + Math.max(0, segTarget - segEl) / 60, endAt = nowMin() + remainMin;
+    const covered = rundown.filter(s => s.status === 'Covered').length, active = rundown.filter(s => s.status !== 'Cut').length;
+    const openIss = L.issues.filter(i => i.status !== 'Resolved'), pre = POD_PREFLIGHT.filter(([k]) => L.preflight[k]).length;
+    const guest = cur.guestId ? pd.guests.find(g => g.id === cur.guestId) : null, sponsor = cur.sponsorId ? pd.sponsors.find(s => s.id === cur.sponsorId) : null;
 
-    const rundown = pd.rundown;
-    const curIdx = Math.min(PodTimer.activeSegIdx, rundown.length - 1);
-    PodTimer.activeSegIdx = curIdx;
-    const curSeg = rundown[curIdx] || rundown[0];
-    const nextSeg = rundown[curIdx + 1] || null;
+    /* actions */
+    const goTo = i => { if (cur.status === 'Recording') cur.status = i > curIdx ? 'Covered' : 'Planned'; PodTimer.activeSegIdx = i; PodTimer.segStartSec = PodTimer.elapsedSec; if (live && rundown[i].status === 'Planned') rundown[i].status = 'Recording'; mark(`Started: ${rundown[i].title}`, 'segment'); liveLog(L, `Segment ${i + 1}: ${rundown[i].title}`, 'scene'); flash(); };
+    const nextSeg = () => { const i = rundown.findIndex((s, j) => j > curIdx && s.status !== 'Cut'); if (i < 0) { cur.status = 'Covered'; toast('That was the last segment — wrap the session when you’re done.'); flash(); return; } cur.status = 'Covered'; goTo(i); };
+    const record = () => { if (live) { PodTimer.pause(); liveLog(L, `Paused at ${fmtTimeSec(PodTimer.elapsedSec)}`, 'sys'); } else { if (!L.started) L.started = Date.now(); PodTimer.start(); if (cur.status === 'Planned') cur.status = 'Recording'; liveLog(L, begun ? `Resumed at ${fmtTimeSec(PodTimer.elapsedSec)}` : 'Recording started', 'sys'); } flash(); };
+    const wrapSession = async () => { if (!(await confirmBox(`Wrap this session? ${fmtTimeSec(PodTimer.elapsedSec)} recorded, ${PodTimer.markers.length} markers. A hand-off sheet goes to the editor and the daily report.`, 'Wrap session', 'Wrap the recording?'))) return; PodTimer.pause(); if (cur.status === 'Recording') cur.status = 'Covered'; mark(`Session wrapped (${fmtTimeSec(PodTimer.elapsedSec)})`, 'sys'); L.ended = Date.now(); liveLog(L, 'Session wrapped', 'sys'); podSave(L); openSessionWrapModal(P, pd, rundown, L); flash(); };
+    acts.record = record; acts.next = nextSeg;
+    const micToggle = async () => { if (PodMicMeter.active) { PodMicMeter.stop(); PodTimer.micMeterActive = false; } else PodTimer.micMeterActive = await PodMicMeter.start(() => vuUpdate()); flash(); };
 
-    // Calculate timings in minutes and seconds
-    let cumMin = 0;
-    const segTimings = rundown.map(s => {
-      const start = cumMin;
-      const dur = s.status === 'Cut' ? 0 : parseDurMin(s.dur);
-      cumMin += dur;
-      return { start, dur, end: cumMin };
-    });
-    const totalMin = cumMin;
-    const totalSec = totalMin * 60;
+    /* header */
+    const header = h('div', { class: 'ld-head' },
+      h('div', { class: 'ld-tile ld-clock rec' + (live ? ' on' : '') }, h('b', { class: 'ld-v mono', id: 'podLiveClock' }, fmtTimeSec(PodTimer.elapsedSec)), h('span', { class: 'ld-s', id: 'podLiveState' }, h('i', { class: 'rec-dot' }), live ? 'Recording' : begun ? 'Paused' : 'Studio ready')),
+      ldTile('Pacing', pace[0], `Runs ~${Math.round(totalMin)} min · ends ~${clockTxt(endAt)}`, pace[1]),
+      ldTile('Segment', `${curIdx + 1} of ${rundown.length}`, `${covered}/${active} covered`, '', ldProgress(active ? covered / active * 100 : 0, 'good')),
+      ldTile('Markers', String(PodTimer.markers.length), 'for the editor'),
+      ldTile('Problems', String(openIss.length), openIss.length ? 'open' : 'all clear', openIss.some(i => sevRank(i.sev) >= 2) ? 'bad' : openIss.length ? 'warn' : ''),
+      h('div', { class: 'ld-actions' },
+        h('button', { class: 'btn big ' + (live ? '' : 'primary rec-btn'), onclick: record, title: 'Record / pause (Space)' }, icon(live ? 'pause' : 'play', 16), live ? 'Pause' : begun ? 'Resume' : 'Record'),
+        h('button', { class: 'btn', onclick: nextSeg, title: 'Finish this segment and start the next (N)' }, icon('right', 15), 'Next'),
+        h('button', { class: 'btn', onclick: wrapSession }, 'Wrap'),
+        h('button', { class: 'icon-btn' + (PodMicMeter.active ? ' on' : ''), onclick: micToggle, title: PodMicMeter.active ? 'Stop the mic meter' : 'Mic level meter', 'aria-label': 'Mic level meter' }, icon('cue', 17)),
+        h('button', { class: 'icon-btn', onclick: () => ldTV(wrap), title: 'Big-display mode (T)', 'aria-label': 'Big-display mode' }, icon('focus', 17))));
 
-    // Active segment elapsed
-    const segElapsedSec = Math.max(0, PodTimer.elapsedSec - PodTimer.segStartSec);
-    const segTargetSec = Math.max(30, parseDurMin(curSeg.dur) * 60);
-    const segOverSec = segElapsedSec - segTargetSec;
-    const segProgressPct = Math.min(100, (segElapsedSec / segTargetSec) * 100);
-
-    // Cumulative pacing
-    let plannedElapsedSec = 0;
-    for (let i = 0; i < curIdx; i++) {
-      if (rundown[i].status !== 'Cut') plannedElapsedSec += parseDurMin(rundown[i].dur) * 60;
-    }
-    plannedElapsedSec += (segTargetSec / 2);
-    const diffSec = PodTimer.elapsedSec - plannedElapsedSec;
-
-    let paceLabel = 'On schedule';
-    let paceClass = 'ok';
-    if (Math.abs(diffSec) < 30) {
-      paceLabel = 'On schedule';
-      paceClass = 'ok';
-    } else if (diffSec > 0) {
-      paceLabel = `Behind +${fmtTimeSec(diffSec)}`;
-      paceClass = 'warn';
-    } else {
-      paceLabel = `Ahead -${fmtTimeSec(Math.abs(diffSec))}`;
-      paceClass = 'ahead';
-    }
-
-    const isLive = PodTimer.running;
-    const hasStarted = PodTimer.elapsedSec > 0;
-
-    function nextSegment() {
-      if (curSeg) curSeg.status = 'Covered';
-      if (curIdx < rundown.length - 1) {
-        PodTimer.activeSegIdx = curIdx + 1;
-        PodTimer.segStartSec = PodTimer.elapsedSec;
-        rundown[PodTimer.activeSegIdx].status = 'Recording';
-        PodTimer.addMarker(`Started: ${rundown[PodTimer.activeSegIdx].title}`, 'segment');
-        PodAudio.playPing();
-      } else {
-        toast('Reached final episode segment!');
-      }
-      flash();
-    }
-
-    function add2Min() {
-      curSeg.dur = (parseFloat(curSeg.dur) || 1) + 2;
-      toast(`Added +2 min to "${curSeg.title}"`);
-      flash();
-    }
-
-    function skipSegment() {
-      if (curSeg) curSeg.status = 'Cut';
-      PodTimer.addMarker(`Cut segment: ${curSeg.title}`, 'warn');
-      if (curIdx < rundown.length - 1) {
-        PodTimer.activeSegIdx = curIdx + 1;
-        PodTimer.segStartSec = PodTimer.elapsedSec;
-        rundown[PodTimer.activeSegIdx].status = 'Recording';
-      }
-      flash();
-    }
-
-    function wrapSession() {
-      if (!confirm(`Wrap this recording session? (${fmtTimeSec(PodTimer.elapsedSec)} recorded, ${PodTimer.markers.length} markers logged)`)) return;
-      PodTimer.pause();
-      if (curSeg && curSeg.status === 'Recording') curSeg.status = 'Covered';
-      PodTimer.addMarker(`Session wrapped (Total run: ${fmtTimeSec(PodTimer.elapsedSec)})`, 'sys');
-      openSessionWrapModal(P, pd, rundown);
-      flash();
-    }
-
-    // Top Header
-    const header = h('div', { class: 'lv-head pod-live-head' },
-      h('div', { class: 'lv-clock' },
-        h('b', { id: 'podLiveClock', style: { fontFamily: 'var(--mono)', fontSize: '28px', letterSpacing: '.04em' } }, fmtTimeSec(PodTimer.elapsedSec)),
-        h('span', { class: 'small muted', id: 'podLiveState', style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-          h('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: isLive ? '#e5484d' : hasStarted ? '#e8a40c' : 'var(--muted)', display: 'inline-block', boxShadow: isLive ? '0 0 6px #e5484d' : 'none' } }),
-          isLive ? 'ON AIR · RECORDING' : hasStarted ? 'SESSION PAUSED' : 'STUDIO READY')),
-      h('div', { class: `lv-stat ${paceClass}` },
-        h('span', { class: 'lv-l' }, 'Pacing & Wrap'),
-        h('b', { id: 'podPaceLabel' }, paceLabel),
-        h('span', { class: 'small' }, `Planned: ~${Math.round(totalMin)}m (${fmtTimeSec(totalSec)})`)),
-      h('div', { class: 'lv-stat' },
-        h('span', { class: 'lv-l' }, 'Segment Flow'),
-        h('b', {}, `${curIdx + 1} of ${rundown.filter(s => s.status !== 'Cut').length}`),
-        h('span', { class: 'small clip' }, curSeg.title.slice(0, 22)),
-        h('div', { class: 'progress' }, h('i', { style: { width: `${((curIdx + 1) / rundown.length) * 100}%` } }))),
-      h('div', { class: 'lv-stat' },
-        h('span', { class: 'lv-l' }, 'Markers Logged'),
-        h('b', {}, String(PodTimer.markers.length)),
-        h('span', { class: 'small' }, 'for audio editor')),
-      h('div', { class: 'lv-actions' },
-        !isLive ? h('button', { class: 'btn primary', onclick: () => { PodTimer.start(); if (curSeg.status === 'Planned') curSeg.status = 'Recording'; flash(); } }, icon('play', 15), hasStarted ? 'Resume' : 'Start recording')
-                : h('button', { class: 'btn', onclick: () => { PodTimer.pause(); flash(); } }, icon('pause', 15), 'Pause'),
-        h('button', { class: 'btn primary sm', onclick: nextSegment, title: 'Complete segment and move to next (Hotkey: N)' }, icon('check', 14), 'Next segment'),
-        h('button', { class: 'btn sm', onclick: wrapSession, title: 'Wrap recording and create editor hand-off sheet' }, 'Wrap session'),
-        h('button', {
-          class: 'btn sm',
-          title: 'Toggle live mic level VU meter',
-          onclick: async () => {
-            if (PodMicMeter.active) {
-              PodMicMeter.stop();
-              PodTimer.micMeterActive = false;
-              flash();
-            } else {
-              const ok = await PodMicMeter.start(() => updateVuMeterDom());
-              PodTimer.micMeterActive = ok;
-              flash();
-            }
-          }
-        }, icon('mic', 15), PodMicMeter.active ? 'Stop Mic Meter' : 'Mic Meter'),
-        h('button', {
-          class: 'btn sm',
-          title: 'Full-screen studio display mode (Hotkey: T)',
-          onclick: () => {
-            UI.liveTV = !UI.liveTV;
-            wrap.classList.toggle('tv', UI.liveTV);
-            if (UI.liveTV && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
-            else if (!UI.liveTV && document.fullscreenElement) document.exitFullscreen();
-          }
-        }, icon('focus', 15), 'TV mode')));
-
-    // Dynamic Alerts
+    /* alerts */
     const alerts = [];
-    if (segOverSec > 30) {
-      alerts.push(['warn', `Segment overtime: "${curSeg.title}" is ${fmtTimeSec(segOverSec)} over target (${parseDurMin(curSeg.dur)}m). Wrap or add +2m.`]);
-    }
-    if (curSeg.guestId) {
-      const g = pd.guests.find(x => x.id === curSeg.guestId);
-      if (g && g.nogo) {
-        alerts.push(['crit', `⚠️ GUEST OFF-LIMITS REMINDER (${g.name}): Do not discuss "${g.nogo}"`]);
-      }
-    }
-    const alertBox = alerts.length ? h('div', { class: 'lv-alerts' }, alerts.map(([k, msg]) => h('div', { class: `lv-alert ${k}` }, icon('alert', 15), h('span', {}, msg)))) : null;
+    openIss.filter(i => i.sev === 'Critical').forEach(i => alerts.push(['crit', `Critical: ${i.title}`]));
+    if (guest && guest.nogo) alerts.push(['crit', `${guest.name} — off limits: ${guest.nogo}`]);
+    if (segOver > 30) alerts.push(['warn', `“${cur.title}” is ${fmtTimeSec(segOver)} over its ${parseDurMin(cur.dur)} min`, { label: '+2 min', fn: () => { cur.dur = (parseFloat(cur.dur) || 1) + 2; flash(); } }]);
+    if (!begun && pre < POD_PREFLIGHT.length) alerts.push(['warn', `Pre-flight: ${pre} of ${POD_PREFLIGHT.length} checks done`, { label: 'Show', fn: () => { LD.setOpen('pod:preflight', true); draw(); } }]);
+    const unread = pd.sponsors.filter(s => !s.recorded); if (begun && unread.length && !rundown.slice(curIdx + 1).some(s => s.sponsorId)) alerts.push(['tip', `${unread.length} sponsor read${unread.length > 1 ? 's' : ''} not recorded yet: ${unread.map(s => s.name).join(', ')}`]);
 
-    // ACTIVE SEGMENT PROMPTER
-    const isOver = segOverSec > 0;
-    const bulletsList = (curSeg.bullets || '').split('\n').filter(Boolean);
-    const linkedSponsor = curSeg.sponsorId ? pd.sponsors.find(s => s.id === curSeg.sponsorId) : null;
-    const linkedGuest = curSeg.guestId ? pd.guests.find(g => g.id === curSeg.guestId) : null;
+    /* on air */
+    const bullets = (cur.bullets || '').split('\n').filter(Boolean);
+    const onAir = h('div', { class: 'ld-card s-active' + (segOver > 0 ? ' over' : ''), 'data-key': 'onair' },
+      h('div', { class: 'ld-card-h' }, h('span', { class: 'ld-l' }, live ? `On air · segment ${curIdx + 1}` : `Segment ${curIdx + 1}`), h('span', { class: 'grow' }),
+        h('span', { class: 'ld-big mono' + (segOver > 0 ? ' neg' : ''), id: 'podSegTime' }, `${fmtTimeSec(segEl)} / ${fmtTimeSec(segTarget)}`)),
+      h('div', { class: 'ld-title' }, h('b', {}, cur.title)),
+      ldProgress(segEl / segTarget * 100, segOver > 0 ? 'bad' : 'info'),
+      cur.cues ? h('div', { class: 'ld-cue' }, icon('cue', 15), h('span', { class: 'grow' }, cur.cues), h('button', { class: 'btn sm primary', onclick: () => { PodAudio.playChime(); mark(`Cue: ${cur.cues}`, 'cue'); flash(); } }, icon('play', 12), 'Fire cue')) : null,
+      P.blocks && P.blocks.length > 2 ? h('div', { class: 'seg sm' }, [['bullets', 'Talking points'], ['script', 'Script']].map(([k, l]) => h('button', { class: (PodTimer.scriptPrompter ? 'script' : 'bullets') === k ? 'on' : '', onclick: () => { PodTimer.scriptPrompter = k === 'script'; draw(); } }, l))) : null,
+      PodTimer.scriptPrompter ? renderScriptPrompter(P, () => draw()) : renderBulletsChecklist(cur, bullets),
+      sponsor ? renderEmbeddedSponsorBox(sponsor, flash) : null, guest ? renderEmbeddedGuestBox(guest, flash) : null,
+      h('div', { class: 'ld-btns' }, h('button', { class: 'btn primary big', onclick: nextSeg }, icon('check', 16), next ? 'Done — next segment' : 'Done'),
+        h('button', { class: 'btn', onclick: () => { cur.dur = (parseFloat(cur.dur) || 1) + 2; flash(); } }, '+2 min'),
+        h('button', { class: 'btn', onclick: () => askMarker(`[${cur.title}] `) }, icon('flag', 14), 'Marker'),
+        h('span', { class: 'grow' }), h('button', { class: 'btn ghost danger', onclick: () => { cur.status = 'Cut'; mark(`Cut segment: ${cur.title}`, 'warn'); liveLog(L, `Cut segment: ${cur.title}`, 'warn'); nextSeg(); } }, 'Cut segment')));
+    const upNext = next ? h('div', { class: 'ld-card s-next', 'data-key': 'next' },
+      h('div', { class: 'ld-card-h' }, h('span', { class: 'ld-l' }, `Up next · segment ${rundown.indexOf(next) + 1}`), h('span', { class: 'grow' }), h('span', { class: 'ld-meta' }, `${parseDurMin(next.dur)} min`)),
+      h('div', { class: 'ld-title' }, h('b', {}, next.title)), next.bullets ? h('div', { class: 'ld-syn clip2' }, next.bullets.split('\n').filter(Boolean).slice(0, 2).join(' · ')) : null,
+      h('div', { class: 'ld-chips' }, next.cues ? h('span', { class: 'chip' }, icon('cue', 12), next.cues) : null, next.guestId ? h('span', { class: 'chip' }, icon('user', 12), (pd.guests.find(g => g.id === next.guestId) || {}).name || 'Guest') : null, next.sponsorId ? h('span', { class: 'chip' }, icon('dollar', 12), (pd.sponsors.find(s => s.id === next.sponsorId) || {}).name || 'Sponsor') : null),
+      h('div', { class: 'ld-btns' }, h('button', { class: 'btn', onclick: () => goTo(rundown.indexOf(next)) }, 'Jump to it'))) : h('div', { class: 'ld-card empty' }, h('span', { class: 'ld-l' }, 'Up next'), h('p', { class: 'muted' }, 'This is the last segment.'));
 
-    const activeCard = h('div', { class: `lv-card active ${isOver ? 'over' : ''}`, style: { padding: '20px 24px', marginBottom: '16px' } },
-      h('div', { class: 'row', style: { alignItems: 'flex-start', marginBottom: '8px' } },
-        h('div', { style: { flex: 1 } },
-          h('span', { class: 'pill', style: { background: 'var(--accent)', color: '#fff', fontWeight: 700, marginBottom: '6px' } }, `ON AIR · SEGMENT ${curIdx + 1}`),
-          h('h2', { style: { fontSize: '22px', margin: '4px 0 2px' } }, curSeg.title)),
-        h('div', { style: { textAlign: 'right' } },
-          h('div', { style: { fontFamily: 'var(--mono)', fontSize: '24px', fontWeight: 700, color: isOver ? 'var(--warn)' : 'var(--text)' } },
-            `${fmtTimeSec(segElapsedSec)} / ${fmtTimeSec(segTargetSec)}`),
-          h('span', { class: 'small muted' }, isOver ? `+${fmtTimeSec(segOverSec)} overtime` : `${fmtTimeSec(segTargetSec - segElapsedSec)} remaining`))),
-      h('div', { class: 'progress lv-prog', style: { height: '6px', margin: '8px 0 14px' } },
-        h('i', { style: { width: `${segProgressPct}%`, background: isOver ? 'var(--warn)' : 'var(--accent)' } })),
+    /* running order */
+    const move = (i, d) => { const j = i + d; if (j < 0 || j >= rundown.length) return; [rundown[i], rundown[j]] = [rundown[j], rundown[i]]; if (PodTimer.activeSegIdx === i) PodTimer.activeSegIdx = j; else if (PodTimer.activeSegIdx === j) PodTimer.activeSegIdx = i; flash(); };
+    const order = ldPanel('pod:order', { title: 'Running order', ico: 'list', count: `${covered}/${active}`, hint: `~${Math.round(totalMin)} min`,
+      tools: [h('button', { class: 'btn sm ghost', onclick: async () => { const t = await promptBox('Add a segment', 'Title of the new topic or segment', ''); if (t) { rundown.splice(curIdx + 1, 0, newSegment({ title: t, dur: 5 })); flash(); } } }, icon('plus', 13), 'Segment'), h('a', { class: 'btn sm ghost', href: `#/p/${P.id}/rundown` }, 'Planner')],
+      body: () => h('div', { class: 'ld-list ld-ro' }, rundown.map((s, i) => h('div', { class: 'ld-ro-row s-' + s.status.toLowerCase() + (i === curIdx ? ' cur' : ''), 'data-key': s.id },
+        h('span', { class: 'ld-time mono' }, `+${Math.floor(tm[i].start)}′`), h('button', { class: 'ld-ro-t', onclick: () => goTo(i), title: 'Go to this segment' }, h('b', {}, `${i + 1}. `), s.title),
+        h('span', { class: 'ld-meta' }, `${parseDurMin(s.dur)}m`),
+        h('button', { class: 'pill st', style: { background: RUNDOWN_TONE[s.status] || '#888' }, title: 'Tap to change: planned → recording → covered → cut', onclick: () => { s.status = { Planned: 'Recording', Recording: 'Covered', Covered: 'Cut', Cut: 'Planned' }[s.status] || 'Planned'; flash(); } }, s.status),
+        ibtn('up', 'Earlier', () => move(i, -1)), ibtn('down', 'Later', () => move(i, 1))))) }, draw);
 
-      // Audio cue banner with 1-click trigger
-      curSeg.cues ? h('div', {
-        class: 'row',
-        style: { alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'color-mix(in srgb, var(--accent) 12%, transparent)', borderRadius: '4px', marginBottom: '14px', fontWeight: 600, color: 'var(--accent)' }
-      },
-      icon('cue', 16),
-      h('span', { style: { flex: 1 } }, `Audio Cue: ${curSeg.cues}`),
-      h('button', {
-        class: 'btn sm primary',
-        title: 'Play chime & log cue trigger',
-        onclick: () => {
-          PodAudio.playChime();
-          PodTimer.addMarker(`Cue Triggered: ${curSeg.cues}`, 'cue');
-          toast(`Triggered audio cue: ${curSeg.cues}`);
-          flash();
-        }
-      }, icon('play', 12), 'Trigger cue')) : null,
+    /* side panels */
+    const markers = ldPanel('pod:markers', { title: 'Editor markers', ico: 'flag', count: PodTimer.markers.length || '', hint: PodTimer.markers[0] ? PodTimer.markers[0].label.slice(0, 32) : '',
+      tools: [h('button', { class: 'btn sm ghost', onclick: () => { if (!PodTimer.markers.length) return toast('No markers yet', true); navigator.clipboard.writeText([...PodTimer.markers].reverse().map(m => `[${fmtTimeSec(m.time)}] ${m.label}`).join('\n')); toast('Markers copied for the editor'); } }, icon('copy', 13), 'Copy')],
+      body: () => [h('div', { class: 'ld-pad' }, POD_MARKS.map(([k, l, msg]) => h('button', { class: 'btn', onclick: () => { mark(msg, k); flash(); } }, l))),
+        h('input', { class: 'inp ld-quick', placeholder: '+ Describe a marker, Enter', onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { mark(e.target.value.trim(), 'custom'); e.target.value = ''; flash(); } } }),
+        ldList('pod:markers', PodTimer.markers, m => h('div', { class: 'ld-ev k-' + m.kind }, h('span', { class: 'ld-time mono' }, fmtTimeSec(m.time)), h('span', { class: 'grow' }, m.label), ibtn('trash', 'Delete marker', () => { const i = PodTimer.markers.indexOf(m); if (i >= 0) PodTimer.markers.splice(i, 1); flash(); }, 'danger')), { limit: 6, empty: 'Tap a button above, or use the R / C / B / M keys.', cls: 'ld-list ld-log' }, draw)] }, draw);
+    const sounds = [['Intro gong', () => PodAudio.playGong(), 'gong'], ['3-2-1 sync', () => PodAudio.playSyncBeeps(), 'sync'], ['Chime', () => PodAudio.playChime(), 'chime'], ['Bleep', () => PodAudio.playBleep(0.7), 'bleep'], ['Ping', () => PodAudio.playPing(), 'ping']];
+    const board = ldPanel('pod:sound', { title: 'Soundboard', ico: 'cue', open: false, hint: 'gong, sync, chime, bleep',
+      tools: [h('label', { class: 'ld-check small' }, h('input', { type: 'checkbox', checked: PodTimer.autoLogSound, onchange: e => { PodTimer.autoLogSound = e.target.checked; } }), 'Log as marker')],
+      body: () => h('div', { class: 'ld-pad' }, sounds.map(([l, fn, k]) => h('button', { class: 'btn', onclick: () => { fn(); if (PodTimer.autoLogSound) { PodTimer.addMarker(`[Sound] ${l}`, k); flash(); } } }, l))) }, draw);
+    const meter = PodMicMeter.active ? ldPanel('pod:mic', { title: 'Mic level', ico: 'cue', tools: [h('span', { id: 'podVuClip', class: 'ld-sev', style: { background: 'var(--danger)', display: 'none' } }, 'CLIP'), h('span', { id: 'podVuLabel', class: 'ld-meta mono' }, '— dB')],
+      body: () => [h('div', { class: 'vu-meter' }, h('div', { id: 'podVuFill', class: 'vu-fill', style: { width: '0%' } })), h('div', { class: 'ld-row ld-meta', style: { justifyContent: 'space-between' } }, h('span', {}, '−48'), h('span', {}, '−18'), h('span', {}, '−12 target'), h('span', {}, '0 dB'))] }, draw) : null;
+    UI.podLiveGuestIdx = Math.min(UI.podLiveGuestIdx || 0, Math.max(0, pd.guests.length - 1)); const g = guest || pd.guests[UI.podLiveGuestIdx];
+    const guestP = pd.guests.length ? ldPanel('pod:guest', { title: 'Guest', ico: 'user', hint: g ? g.name : '',
+      tools: pd.guests.length > 1 && !guest ? [h('select', { class: 'inp sm', onchange: e => { UI.podLiveGuestIdx = +e.target.value; draw(); } }, pd.guests.map((x, i) => h('option', { value: i, selected: x === g }, x.name)))] : null,
+      body: () => { const qs = (g.questions || '').split('\n').filter(Boolean), asked = qs.filter((q, i) => PodTimer.checkedQuestions.has(`${g.id}-${i}`)).length;
+        return [h('div', { class: 'ld-row' }, h('b', {}, g.name), g.pronouns ? h('span', { class: 'pill' }, g.pronouns) : null, h('span', { class: 'grow' }), g.link ? h('a', { class: 'btn sm', href: /^https?:/.test(g.link) ? g.link : 'https://' + g.link, target: '_blank', rel: 'noreferrer' }, 'Join studio') : null),
+          g.title ? h('div', { class: 'ld-meta' }, g.title) : null, g.nogo ? h('div', { class: 'ld-warn' }, `Off limits: ${g.nogo}`) : null,
+          qs.length ? h('div', { class: 'ld-ctx-l' }, 'Questions', h('em', {}, `${asked}/${qs.length}`)) : null,
+          ldList('pod:q:' + g.id, qs.map((q, i) => [q, `${g.id}-${i}`]), ([q, k]) => h('label', { class: 'ld-check' + (PodTimer.checkedQuestions.has(k) ? ' done' : '') }, h('input', { type: 'checkbox', checked: PodTimer.checkedQuestions.has(k), onchange: e => { e.target.checked ? PodTimer.checkedQuestions.add(k) : PodTimer.checkedQuestions.delete(k); draw(); } }), h('span', {}, q)), { limit: 6 }, draw)]; } }, draw) : null;
+    UI.podLiveSponsorIdx = Math.min(UI.podLiveSponsorIdx || 0, Math.max(0, pd.sponsors.length - 1)); const sp = sponsor || pd.sponsors[UI.podLiveSponsorIdx];
+    const spons = pd.sponsors.length ? ldPanel('pod:sponsor', { title: 'Sponsor reads', ico: 'dollar', count: `${pd.sponsors.filter(s => s.recorded).length}/${pd.sponsors.length}`, open: !!sponsor, hint: unread.length ? `${unread.length} to record` : 'all recorded',
+      tools: pd.sponsors.length > 1 && !sponsor ? [h('select', { class: 'inp sm', onchange: e => { UI.podLiveSponsorIdx = +e.target.value; draw(); } }, pd.sponsors.map((x, i) => h('option', { value: i, selected: x === sp }, `${x.name} (${x.slot})`)))] : null,
+      body: () => [h('div', { class: 'ld-row' }, h('b', {}, sp.name), h('span', { class: 'pill' }, sp.slot), h('span', { class: 'grow' }), h('button', { class: 'btn sm ghost', onclick: () => { navigator.clipboard.writeText(sp.copy || ''); toast('Ad copy copied'); } }, icon('copy', 12), 'Copy')),
+        sp.url || sp.code ? h('div', { class: 'ld-chips' }, sp.url ? h('span', { class: 'chip' }, sp.url) : null, sp.code ? h('span', { class: 'chip on' }, sp.code) : null) : null,
+        h('div', { class: 'ld-read' }, sp.copy || sp.points || 'No copy yet.'),
+        h('label', { class: 'ld-check' }, h('input', { type: 'checkbox', checked: !!sp.recorded, onchange: e => { sp.recorded = e.target.checked; if (sp.recorded) mark(`Sponsor read: ${sp.name}`, 'cue'); flash(); } }), 'Recorded')] }, draw) : null;
+    const preflight = ldPanel('pod:preflight', { title: 'Pre-flight', ico: 'check', count: `${pre}/${POD_PREFLIGHT.length}`, tone: pre === POD_PREFLIGHT.length ? 'good' : begun ? 'warn' : '', open: !begun, hint: pre === POD_PREFLIGHT.length ? 'studio ready' : `${POD_PREFLIGHT.length - pre} to check`,
+      body: () => h('div', { class: 'ld-list' }, POD_PREFLIGHT.map(([k, l]) => h('label', { class: 'ld-check' + (L.preflight[k] ? ' done' : '') }, h('input', { type: 'checkbox', checked: !!L.preflight[k], onchange: e => { L.preflight[k] = e.target.checked; flash(); } }), h('span', {}, l)))) }, draw);
+    const hotkeys = Device.form() === 'desktop' || !Device.touchOn() ? ldPanel('pod:keys', { title: 'Keyboard', ico: 'keyboard', open: false, hint: 'Space record · N next · R C B M markers',
+      body: () => h('div', { class: 'ld-keys' }, [['Space', 'Record / pause'], ['N', 'Next segment'], ['R', 'Retake marker'], ['C', 'Clip marker'], ['B', 'Bleep'], ['M', 'Custom marker'], ['T', 'Big display']].map(([k, l]) => h('span', {}, h('kbd', {}, k), l))) }, draw) : null;
 
-      // Prompter view switcher (Bullets vs Script)
-      P.blocks && P.blocks.length > 2 ? h('div', { class: 'row', style: { marginBottom: '12px' } },
-        h('span', { class: 'small muted', style: { fontWeight: 600 } }, 'Prompter view:'),
-        h('div', { class: 'seg', style: { marginLeft: '8px' } },
-          [['bullets', 'Talking points'], ['script', 'Script prompter']].map(([k, l]) => h('button', {
-            class: (PodTimer.scriptPrompter ? 'script' : 'bullets') === k ? 'on' : '',
-            onclick: () => { PodTimer.scriptPrompter = k === 'script'; flash(); }
-          }, l)))) : null,
+    cx.items = rundown.map((s, i) => ({ id: s.id, label: `${i + 1}. ${s.title}` }));
+    cx.groups = [{ key: 'hosts', label: 'Hosts', people: P.people.filter(p => p.type === 'cast' && p.name).map(p => ({ p, sub: p.role || p.character || 'Host' })) },
+      { key: 'guests', label: 'Guests', people: pd.guests.filter(x => x.name).map(x => ({ p: x, sub: x.title || 'Guest' })) },
+      { key: 'crew', label: 'Crew', people: P.people.filter(p => p.type === 'crew' && p.name).map(p => ({ p, sub: [p.role, p.dept].filter(Boolean).join(' · ') })) }];
+    cx.taskFilter = t => !t.due || t.due <= cx.date || t.status === 'blocked' || t.status === 'doing';
 
-      // Prompter Content
-      PodTimer.scriptPrompter ? renderScriptPrompter(P, flash) : renderBulletsChecklist(curSeg, bulletsList),
-
-      // Linked Sponsor in active segment
-      linkedSponsor ? renderEmbeddedSponsorBox(linkedSponsor, flash) : null,
-
-      // Linked Guest in active segment
-      linkedGuest ? renderEmbeddedGuestBox(linkedGuest, flash) : null,
-
-      // Actions Footer
-      h('div', { class: 'row wrap', style: { gap: '10px', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border)' } },
-        h('button', { class: 'btn primary', onclick: nextSegment }, icon('check', 15), 'Complete & Next segment'),
-        h('button', { class: 'btn sm', onclick: add2Min }, icon('plus', 13), '+2 Min'),
-        h('button', { class: 'btn sm ghost danger', onclick: skipSegment }, icon('trash', 13), 'Cut segment'),
-        h('span', { class: 'grow' }),
-        h('button', {
-          class: 'btn sm ghost',
-          onclick: () => {
-            const l = prompt(`Marker note on "${curSeg.title}":`);
-            if (l) { PodTimer.addMarker(`[${curSeg.title}] ${l}`); flash(); }
-          }
-        }, icon('edit', 14), 'Add marker to this segment')));
-
-    // UP NEXT CARD
-    const upNextCard = nextSeg ? h('div', { class: 'lv-card pending', style: { padding: '14px 18px', marginBottom: '16px' } },
-      h('div', { class: 'row', style: { marginBottom: '4px' } },
-        h('span', { class: 'lv-l' }, `UP NEXT · SEGMENT ${curIdx + 2}`),
-        h('span', { class: 'grow' }),
-        h('span', { class: 'small muted', style: { fontWeight: 600 } }, `Planned: ${nextSeg.dur} min`)),
-      h('div', { style: { fontSize: '17px', fontWeight: 700, margin: '4px 0 6px' } }, nextSeg.title),
-      nextSeg.bullets ? h('div', { class: 'small muted clip', style: { maxHeight: '36px' } }, nextSeg.bullets.split('\n')[0]) : null,
-      h('div', { class: 'row', style: { marginTop: '8px' } },
-        nextSeg.cues ? h('span', { class: 'pill', style: { fontSize: '11px', background: 'var(--surface2)' } }, `Cue: ${nextSeg.cues}`) : null,
-        h('span', { class: 'grow' }),
-        h('button', { class: 'btn sm primary', onclick: () => { PodTimer.activeSegIdx = curIdx + 1; PodTimer.segStartSec = PodTimer.elapsedSec; flash(); } }, 'Jump to this segment')))
-      : h('div', { class: 'lv-card empty', style: { padding: '14px 18px', marginBottom: '16px' } }, h('span', { class: 'lv-l' }, 'UP NEXT'), h('div', { class: 'muted' }, 'Final segment reached.'));
-
-    // TIMELINE LIST WITH REORDERING & ON-THE-FLY EDITS
-    const timelineCard = h('div', { class: 'lv-panel' },
-      h('div', { class: 'row', style: { marginBottom: '10px' } },
-        h('h3', {}, 'Episode Rundown Track'),
-        h('span', { class: 'small muted', style: { marginLeft: '8px' } }, 'Click to jump focus · Re-order on the fly'),
-        h('span', { class: 'grow' }),
-        h('button', {
-          class: 'btn sm ghost',
-          onclick: () => {
-            const t = prompt('New topic or unplanned segment title:');
-            if (t) {
-              rundown.push(newSegment({ title: t, dur: 5 }));
-              Store.touch();
-              toast(`Added segment "${t}"`);
-              flash();
-            }
-          }
-        }, icon('plus', 13), 'Quick topic')),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-        rundown.map((s, idx) => {
-          const isActive = idx === curIdx;
-          const isDone = s.status === 'Covered';
-          const isCut = s.status === 'Cut';
-          const tm = segTimings[idx];
-          return h('div', {
-            class: `lv-row ${isActive ? 'active' : isDone ? 'done' : isCut ? 'dropped' : 'pending'}`,
-            style: {
-              padding: '6px 10px',
-              borderRadius: '3px',
-              border: isActive ? '2px solid var(--accent)' : '1px solid var(--border)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              opacity: isCut ? '0.5' : '1'
-            }
-          },
-          h('span', { class: 'pill', style: { fontFamily: 'var(--mono)', fontSize: '11px', flex: 'none', cursor: 'pointer' }, onclick: () => { PodTimer.activeSegIdx = idx; PodTimer.segStartSec = PodTimer.elapsedSec; flash(); } }, fmtTimeSec(tm.start * 60)),
-          h('b', { style: { flex: 1, fontSize: '13px', cursor: 'pointer' }, onclick: () => { PodTimer.activeSegIdx = idx; PodTimer.segStartSec = PodTimer.elapsedSec; flash(); } }, `#${idx + 1}: ${s.title}`),
-          h('span', { class: 'small muted' }, `${s.dur}m`),
-          // Reordering buttons
-          h('div', { class: 'row', style: { gap: '2px' } },
-            h('button', {
-              class: 'icon-btn',
-              disabled: idx === 0,
-              title: 'Move segment earlier',
-              onclick: e => {
-                e.stopPropagation();
-                [rundown[idx - 1], rundown[idx]] = [rundown[idx], rundown[idx - 1]];
-                if (PodTimer.activeSegIdx === idx) PodTimer.activeSegIdx = idx - 1;
-                else if (PodTimer.activeSegIdx === idx - 1) PodTimer.activeSegIdx = idx;
-                Store.touch();
-                flash();
-              }
-            }, '▲'),
-            h('button', {
-              class: 'icon-btn',
-              disabled: idx === rundown.length - 1,
-              title: 'Move segment later',
-              onclick: e => {
-                e.stopPropagation();
-                [rundown[idx], rundown[idx + 1]] = [rundown[idx + 1], rundown[idx]];
-                if (PodTimer.activeSegIdx === idx) PodTimer.activeSegIdx = idx + 1;
-                else if (PodTimer.activeSegIdx === idx + 1) PodTimer.activeSegIdx = idx;
-                Store.touch();
-                flash();
-              }
-            }, '▼')),
-          // Status cycle pill
-          h('button', {
-            class: 'pill',
-            style: { background: RUNDOWN_TONE[s.status] || '#888', color: '#fff', fontSize: '10px', cursor: 'pointer', border: 'none' },
-            title: 'Click to cycle status',
-            onclick: e => {
-              e.stopPropagation();
-              const nextSt = { Planned: 'Recording', Recording: 'Covered', Covered: 'Cut', Cut: 'Planned' }[s.status] || 'Planned';
-              s.status = nextSt;
-              Store.touch();
-              flash();
-            }
-          }, s.status));
-        })));
-
-    // Keyboard Shortcuts Footer Bar
-    const shortcutsBar = h('div', { class: 'shortcuts-bar' },
-      h('span', { style: { fontWeight: 700 } }, 'Studio Hotkeys:'),
-      h('span', {}, h('kbd', {}, 'Space'), ' Record / Pause'),
-      h('span', {}, h('kbd', {}, 'N'), ' Next Segment'),
-      h('span', {}, h('kbd', {}, 'R'), ' Retake Marker'),
-      h('span', {}, h('kbd', {}, 'C'), ' Clip Marker'),
-      h('span', {}, h('kbd', {}, 'B'), ' Censor Bleep'),
-      h('span', {}, h('kbd', {}, 'M'), ' Custom Marker'),
-      h('span', {}, h('kbd', {}, 'T'), ' Fullscreen TV'));
-
-    // SIDEBAR PANELS
-    const micMeterPanel = PodMicMeter.active ? renderLiveMicMeter(flash) : null;
-    const soundboardPanel = renderLiveSoundboardPanel(flash);
-    const markersPanel = renderLiveMarkersPanel(flash, P);
-    const issuesPanel = renderLiveIssuesPanel(flash);
-    const guestPanel = renderLiveGuestPanel(pd, flash);
-    const sponsorPanel = renderLiveSponsorPanel(pd, flash);
-    const preflightPanel = renderLivePreflightPanel(flash);
-    const talentPanel = renderLiveTalentPanel(P, pd, flash);
-    const tasksPanel = renderLiveTasksPanel(P, flash);
-
-    wrap.replaceChildren(
-      header,
-      alertBox,
-      h('div', { class: 'lv-grid' },
-        h('div', { class: 'lv-main' }, activeCard, upNextCard, timelineCard, shortcutsBar),
-        h('div', { class: 'lv-side' }, micMeterPanel, soundboardPanel, markersPanel, issuesPanel, guestPanel, sponsorPanel, preflightPanel, talentPanel, tasksPanel)
-      )
-    );
+    morph(wrap, [header, ldAlerts(alerts, draw), h('div', { class: 'ld-grid' },
+      h('div', { class: 'ld-main' }, h('div', { class: 'ld-now-row' }, onAir, upNext), order, hotkeys),
+      h('div', { class: 'ld-side' }, meter, markers, ldProblems(cx), guestP, spons, preflight, ldCheckin(cx), board, ldTasks(cx), ldActivity(cx)))].filter(Boolean));
+    vuUpdate();
   }
-
-  draw();
-
-  function updateVuMeterDom() {
-    const fill = $('#podVuFill');
-    const label = $('#podVuLabel');
-    const clipEl = $('#podVuClip');
-    if (!fill || !label) return;
-    const db = PodMicMeter.currentDb;
-    const pct = Math.min(100, Math.max(0, ((db + 48) / 48) * 100));
-    fill.style.width = `${pct}%`;
-    label.textContent = `${db.toFixed(1)} dB`;
-    if (clipEl) {
-      clipEl.style.display = PodMicMeter.isClipping ? 'inline-block' : 'none';
-    }
+  function vuUpdate() {
+    const fill = $('#podVuFill'), label = $('#podVuLabel'), clip = $('#podVuClip'); if (!fill || !label) return;
+    const db = PodMicMeter.currentDb; fill.style.width = Math.min(100, Math.max(0, (db + 48) / 48 * 100)) + '%'; label.textContent = `${db.toFixed(1)} dB`; if (clip) clip.style.display = PodMicMeter.isClipping ? '' : 'none';
   }
-
+  /* the clocks tick without a redraw */
   const unsub = PodTimer.subscribe(() => {
-    const clock = $('#podLiveClock');
-    if (clock) clock.textContent = fmtTimeSec(PodTimer.elapsedSec);
-    const stateEl = $('#podLiveState');
-    if (stateEl) {
-      stateEl.innerHTML = '';
-      stateEl.append(
-        h('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: PodTimer.running ? '#e5484d' : PodTimer.elapsedSec > 0 ? '#e8a40c' : 'var(--muted)', display: 'inline-block', boxShadow: PodTimer.running ? '0 0 6px #e5484d' : 'none' } }),
-        PodTimer.running ? 'ON AIR · RECORDING' : PodTimer.elapsedSec > 0 ? 'SESSION PAUSED' : 'STUDIO READY'
-      );
-    }
+    const c = $('#podLiveClock'); if (c) c.textContent = fmtTimeSec(PodTimer.elapsedSec);
+    const cur = pd.rundown[PodTimer.activeSegIdx], st = $('#podSegTime'); if (st && cur) { const el = Math.max(0, PodTimer.elapsedSec - PodTimer.segStartSec), tg = Math.max(30, parseDurMin(cur.dur) * 60); st.textContent = `${fmtTimeSec(el)} / ${fmtTimeSec(tg)}`; st.classList.toggle('neg', el > tg); }
   });
-
-  // Global Studio Hotkey Listener
   const onKeyDown = e => {
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) return;
-    if (e.code === 'Space') {
-      e.preventDefault();
-      PodTimer.running ? PodTimer.pause() : PodTimer.start();
-      flash();
-    } else if (e.key === 'n' || e.key === 'N' || e.key === 'ArrowRight') {
-      e.preventDefault();
-      const rundown = pd.rundown;
-      const curIdx = PodTimer.activeSegIdx;
-      if (curIdx < rundown.length - 1) {
-        rundown[curIdx].status = 'Covered';
-        PodTimer.activeSegIdx = curIdx + 1;
-        PodTimer.segStartSec = PodTimer.elapsedSec;
-        rundown[PodTimer.activeSegIdx].status = 'Recording';
-        PodTimer.addMarker(`Started: ${rundown[PodTimer.activeSegIdx].title}`, 'segment');
-        PodAudio.playPing();
-        flash();
-      }
-    } else if (e.key === 'r' || e.key === 'R') {
-      e.preventDefault();
-      PodTimer.addMarker('Retake / Line flub', 'retake');
-      PodAudio.playPing();
-      toast('Logged retake marker [R]');
-      flash();
-    } else if (e.key === 'c' || e.key === 'C') {
-      e.preventDefault();
-      PodTimer.addMarker('Highlight / Golden quote', 'quote');
-      PodAudio.playPing();
-      toast('Logged highlight marker [C]');
-      flash();
-    } else if (e.key === 'b' || e.key === 'B') {
-      e.preventDefault();
-      PodAudio.playBleep(0.7);
-      PodTimer.addMarker('Bleep / Censor point', 'bleep');
-      toast('Bleeped & logged marker [B]');
-      flash();
-    } else if (e.key === 'm' || e.key === 'M') {
-      e.preventDefault();
-      const l = prompt('Marker description:');
-      if (l) {
-        PodTimer.addMarker(l);
-        PodAudio.playPing();
-        flash();
-      }
-    } else if (e.key === 't' || e.key === 'T') {
-      e.preventDefault();
-      UI.liveTV = !UI.liveTV;
-      wrap.classList.toggle('tv', UI.liveTV);
-      if (UI.liveTV && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
-      else if (!UI.liveTV && document.fullscreenElement) document.exitFullscreen();
-    }
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('body > .overlay')) return;
+    const k = e.key.toLowerCase(), act = { ' ': () => acts.record && acts.record(), n: () => acts.next && acts.next(), arrowright: () => acts.next && acts.next(),
+      r: () => { mark('Retake / line flub', 'retake'); toast('Retake marker'); flash(); }, c: () => { mark('Highlight / golden quote', 'quote'); toast('Clip marker'); flash(); },
+      b: () => { PodAudio.playBleep(0.7); PodTimer.addMarker('Bleep / censor point', 'bleep'); flash(); }, m: () => askMarker(), t: () => ldTV(wrap) }[k];
+    if (act) { e.preventDefault(); act(); }
   };
   window.addEventListener('keydown', onKeyDown);
-
-  // Auto-scroll loop for teleprompter mode
-  scrollInterval = setInterval(() => {
-    if (PodTimer.autoScroll && PodTimer.scriptPrompter) {
-      const box = $('#podPrompterBox');
-      if (box) {
-        box.scrollTop += PodTimer.scrollSpeed || 1;
-      }
-    }
-  }, 40);
-
-  timer = setInterval(() => {
-    if (PodTimer.running) draw();
-  }, 4000);
-
-  const onFs = () => { if (!document.fullscreenElement && UI.liveTV) { UI.liveTV = false; wrap.classList.remove('tv'); } };
-  document.addEventListener('fullscreenchange', onFs);
-
-  return () => {
-    clearInterval(timer);
-    clearInterval(scrollInterval);
-    unsub();
-    PodMicMeter.stop();
-    window.removeEventListener('keydown', onKeyDown);
-    document.removeEventListener('fullscreenchange', onFs);
-    if (document.fullscreenElement) document.exitFullscreen();
-  };
+  const scroll = setInterval(() => { if (PodTimer.autoScroll && PodTimer.scriptPrompter) { const box = $('#podPrompterBox'); if (box) box.scrollTop += PodTimer.scrollSpeed || 1; } }, 40);
+  draw();
+  const stop = ldTicker(wrap, { redraw: () => PodTimer.running && draw(), every: 5000 });
+  return () => { stop(); clearInterval(scroll); unsub(); PodMicMeter.stop(); window.removeEventListener('keydown', onKeyDown); };
 }
 
-/* ---------------------------------------------------------------
-   Live Dashboard Sub-components
-   --------------------------------------------------------------- */
-function renderLiveMicMeter(flash) {
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '6px' } },
-      h('h3', {}, 'Live Mic VU Meter'),
-      h('span', { id: 'podVuClip', class: 'pill', style: { background: 'var(--danger)', color: '#fff', fontSize: '10px', fontWeight: 800, display: 'none' } }, 'CLIP!'),
-      h('span', { class: 'grow' }),
-      h('span', { id: 'podVuLabel', class: 'small mono muted' }, `${PodMicMeter.currentDb.toFixed(1)} dB`),
-      h('button', {
-        class: 'icon-btn',
-        title: 'Close mic meter',
-        onclick: () => { PodMicMeter.stop(); PodTimer.micMeterActive = false; flash(); }
-      }, icon('close', 14))),
-    h('div', { class: 'vu-meter', style: { margin: '4px 0' } },
-      h('div', { id: 'podVuFill', class: 'vu-fill', style: { width: '0%' } })),
-    h('div', { class: 'row small muted', style: { justifyContent: 'space-between', fontSize: '10px' } },
-      h('span', {}, '-48 dB'),
-      h('span', {}, '-18 dB'),
-      h('span', {}, '-12 dB (Target)'),
-      h('span', {}, '0 dB')));
-}
-
-function renderLiveSoundboardPanel(flash) {
-  const sounds = [
-    ['Intro Gong', () => PodAudio.playGong(), 'gong', 'Theme stinger / gong'],
-    ['3-2-1 Sync', () => PodAudio.playSyncBeeps(), 'sync', 'Sync clap beeps'],
-    ['Chime', () => PodAudio.playChime(), 'chime', 'Transition chime'],
-    ['Bleep', () => PodAudio.playBleep(0.7), 'bleep', 'Censor bleep (1kHz)'],
-    ['Marker Ping', () => PodAudio.playPing(), 'ping', 'Audio bookmark'],
-  ];
-
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '8px' } },
-      h('h3', {}, 'Studio Soundboard & Cartwall'),
-      h('span', { class: 'grow' }),
-      h('label', { class: 'row small muted', style: { gap: '4px', cursor: 'pointer', fontSize: '11px' } },
-        h('input', {
-          type: 'checkbox',
-          checked: PodTimer.autoLogSound,
-          onchange: e => { PodTimer.autoLogSound = e.target.checked; }
-        }),
-        'Auto-marker')),
-    h('div', { class: 'soundboard-grid' },
-      sounds.map(([label, playFn, kind, desc]) => h('button', {
-        class: 'sb-btn',
-        title: desc,
-        onclick: () => {
-          playFn();
-          if (PodTimer.autoLogSound) {
-            PodTimer.addMarker(`[Sound] ${label}`, kind);
-          }
-          toast(`Played: ${label}`);
-          flash();
-        }
-      },
-      h('span', { style: { fontSize: '16px' } }, kind === 'gong' ? '📢' : kind === 'sync' ? '⏱️' : kind === 'chime' ? '🔔' : kind === 'bleep' ? '🤬' : '⭐'),
-      h('span', {}, label)))));
-}
-
+/* talking points: tick them off as you go */
 function renderBulletsChecklist(seg, bullets) {
-  if (!bullets.length) {
-    return h('p', { class: 'small muted', style: { fontStyle: 'italic', margin: '10px 0' } }, 'No bullet points set for this segment. Add them in the Rundown planner.');
-  }
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', margin: '12px 0' } },
-    bullets.map((b, i) => {
-      const key = `${seg.id}-${i}`;
-      const isChecked = PodTimer.checkedBullets.has(key);
-      return h('label', {
-        class: 'row small',
-        style: {
-          gap: '10px',
-          cursor: 'pointer',
-          padding: '8px 12px',
-          background: isChecked ? 'var(--surface2)' : 'var(--surface)',
-          borderRadius: '3px',
-          textDecoration: isChecked ? 'line-through' : 'none',
-          color: isChecked ? 'var(--muted)' : 'var(--text)',
-          fontSize: '15px',
-          lineHeight: '1.45',
-          border: '1px solid var(--border)'
-        }
-      },
-      h('input', {
-        type: 'checkbox',
-        checked: isChecked,
-        onchange: e => {
-          e.target.checked ? PodTimer.checkedBullets.add(key) : PodTimer.checkedBullets.delete(key);
-          PodTimer.notify();
-        }
-      }),
-      h('span', {}, b.replace(/^[•\-*]\s*/, '')));
-    }));
+  if (!bullets.length) return h('p', { class: 'ld-empty' }, 'No talking points for this segment — add them in the rundown planner.');
+  return h('div', { class: 'ld-points' }, bullets.map((b, i) => { const key = `${seg.id}-${i}`, on = PodTimer.checkedBullets.has(key);
+    return h('label', { class: 'ld-check big' + (on ? ' done' : '') }, h('input', { type: 'checkbox', checked: on, onchange: e => { e.target.checked ? PodTimer.checkedBullets.add(key) : PodTimer.checkedBullets.delete(key); e.target.closest('label').classList.toggle('done', e.target.checked); } }), h('span', {}, b.replace(/^[•\-*]\s*/, ''))); }));
 }
-
-function renderScriptPrompter(P, flash) {
-  const fs = PodTimer.prompterFontSize || 16;
-  const isAuto = !!PodTimer.autoScroll;
-  const spd = PodTimer.scrollSpeed || 1;
-
-  return h('div', {},
-    // Teleprompter Controls Bar
-    h('div', { class: 'row', style: { gap: '8px', padding: '6px 10px', background: 'var(--surface2)', borderRadius: '4px', marginBottom: '8px' } },
-      h('button', {
-        class: 'btn sm primary',
-        onclick: () => { PodTimer.autoScroll = !PodTimer.autoScroll; flash(); }
-      }, icon(isAuto ? 'pause' : 'play', 13), isAuto ? 'Pause scroll' : 'Auto-scroll'),
-      h('div', { class: 'seg' },
-        [[1, '1x'], [1.5, '1.5x'], [2, '2x']].map(([s, label]) => h('button', {
-          class: spd === s ? 'on' : '',
-          onclick: () => { PodTimer.scrollSpeed = s; flash(); }
-        }, label))),
-      h('span', { class: 'grow' }),
-      h('span', { class: 'small muted', style: { fontWeight: 600 } }, 'Font:'),
-      h('button', {
-        class: 'icon-btn',
-        title: 'Decrease prompter font size',
-        disabled: fs <= 12,
-        onclick: () => { PodTimer.prompterFontSize = Math.max(12, fs - 2); flash(); }
-      }, 'A-'),
-      h('button', {
-        class: 'icon-btn',
-        title: 'Increase prompter font size',
-        disabled: fs >= 28,
-        onclick: () => { PodTimer.prompterFontSize = Math.min(28, fs + 2); flash(); }
-      }, 'A+')),
-    // Prompter Script Box
-    h('div', {
-      id: 'podPrompterBox',
-      class: 'prompter-box',
-      style: {
-        padding: '18px 24px',
-        maxHeight: '380px',
-        overflow: 'auto',
-        fontSize: `${fs}px`,
-        lineHeight: '1.55',
-        fontFamily: 'var(--mono)'
-      }
-    },
-    P.blocks.map(b => {
-      const isChar = b.type === 'character';
-      const isSfx = b.type === 'sfx';
-      const isMusic = b.type === 'music';
-      const isScene = b.type === 'scene';
-      return h('div', {
-        style: {
-          marginBottom: isChar || isScene ? '10px' : '4px',
-          paddingLeft: isChar ? '20%' : b.type === 'dialogue' ? '12%' : '0',
-          fontWeight: isChar || isScene || isSfx ? 700 : 'normal',
-          fontStyle: b.type === 'paren' || isMusic ? 'italic' : 'normal',
-          color: isSfx ? 'var(--accent)' : isMusic ? '#a371f7' : b.type === 'sponsor' ? '#d97706' : 'inherit'
-        }
-      }, b.text);
-    })));
+/* the script as a teleprompter: a window that scrolls itself, with the scrollbar hidden */
+function renderScriptPrompter(P, redraw) {
+  const fs = PodTimer.prompterFontSize || 18, auto = !!PodTimer.autoScroll, spd = PodTimer.scrollSpeed || 1;
+  return h('div', { class: 'ld-prompter' },
+    h('div', { class: 'ld-row' }, h('button', { class: 'btn sm primary', onclick: () => { PodTimer.autoScroll = !auto; redraw(); } }, icon(auto ? 'pause' : 'play', 13), auto ? 'Stop scroll' : 'Auto-scroll'),
+      h('div', { class: 'seg sm' }, [[1, '1×'], [1.5, '1.5×'], [2, '2×']].map(([s, l]) => h('button', { class: spd === s ? 'on' : '', onclick: () => { PodTimer.scrollSpeed = s; redraw(); } }, l))), h('span', { class: 'grow' }),
+      h('button', { class: 'icon-btn', title: 'Smaller text', disabled: fs <= 12, onclick: () => { PodTimer.prompterFontSize = Math.max(12, fs - 2); redraw(); } }, 'A−'), h('button', { class: 'icon-btn', title: 'Larger text', disabled: fs >= 34, onclick: () => { PodTimer.prompterFontSize = Math.min(34, fs + 2); redraw(); } }, 'A+')),
+    h('div', { id: 'podPrompterBox', class: 'prompter-box', style: { fontSize: fs + 'px' } }, P.blocks.map(b => h('div', { class: 'pb-' + b.type }, b.text))));
 }
-
 function renderEmbeddedSponsorBox(sp, flash) {
-  return h('div', {
-    class: 'card',
-    style: {
-      padding: '14px 18px',
-      margin: '12px 0',
-      background: 'color-mix(in srgb, var(--accent) 7%, transparent)',
-      borderLeft: '4px solid var(--accent)'
-    }
-  },
-  h('div', { class: 'row', style: { marginBottom: '6px' } },
-    h('b', { style: { color: 'var(--accent)', fontSize: '14px' } }, `SPONSOR AD READ: ${sp.name} (${sp.slot})`),
-    h('span', { class: 'grow' }),
-    h('button', {
-      class: 'btn sm primary',
-      onclick: () => { sp.recorded = true; toast(`Marked ${sp.name} as recorded`); flash(); }
-    }, icon('check', 13), sp.recorded ? 'Recorded ✓' : 'Mark recorded')),
-  sp.code || sp.url ? h('div', { class: 'row', style: { gap: '10px', marginBottom: '8px' } },
-    sp.url ? h('span', { class: 'pill' }, `URL: ${sp.url}`) : null,
-    sp.code ? h('span', { class: 'pill', style: { fontWeight: 700 } }, `CODE: ${sp.code}`) : null,
-    h('button', {
-      class: 'btn sm ghost',
-      onclick: () => {
-        navigator.clipboard.writeText(`${sp.url || ''} promo code: ${sp.code || ''}`.trim());
-        toast('Copied URL & Code');
-      }
-    }, icon('copy', 12), 'Copy URL/Code')) : null,
-  h('div', { style: { fontStyle: 'italic', fontSize: '14px', lineHeight: '1.45', margin: '6px 0' } }, sp.copy || sp.points));
+  return h('div', { class: 'ld-inset sponsor' }, h('div', { class: 'ld-row' }, h('b', {}, `Sponsor read · ${sp.name}`), h('span', { class: 'pill' }, sp.slot), h('span', { class: 'grow' }), h('button', { class: 'btn sm ' + (sp.recorded ? '' : 'primary'), onclick: () => { sp.recorded = !sp.recorded; flash(); } }, icon('check', 13), sp.recorded ? 'Recorded' : 'Mark recorded')),
+    sp.url || sp.code ? h('div', { class: 'ld-chips' }, sp.url ? h('span', { class: 'chip' }, sp.url) : null, sp.code ? h('span', { class: 'chip on' }, `Code ${sp.code}`) : null) : null,
+    h('div', { class: 'ld-read' }, sp.copy || sp.points || ''));
 }
-
-function renderEmbeddedGuestBox(g, flash) {
-  return h('div', {
-    class: 'card',
-    style: {
-      padding: '14px 18px',
-      margin: '12px 0',
-      background: 'var(--surface2)',
-      borderLeft: '4px solid var(--ok)'
-    }
-  },
-  h('div', { class: 'row', style: { marginBottom: '6px' } },
-    h('b', { style: { fontSize: '15px' } }, `GUEST: ${g.name}`),
-    h('span', { class: 'small muted', style: { marginLeft: '6px' } }, g.title || ''),
-    h('span', { class: 'grow' }),
-    g.link ? h('a', {
-      class: 'btn sm primary',
-      href: g.link.startsWith('http') ? g.link : 'https://' + g.link,
-      target: '_blank',
-      rel: 'noreferrer'
-    }, 'Open Studio') : null),
-  g.nogo ? h('div', {
-    class: 'small',
-    style: { color: 'var(--warn)', fontWeight: 600, margin: '6px 0' }
-  }, `⚠️ Do not discuss: ${g.nogo}`) : null);
-}
-
-function renderLiveMarkersPanel(flash, P) {
-  const quickPad = h('div', { class: 'row', style: { gap: '6px', marginBottom: '10px', flexWrap: 'wrap' } },
-    h('button', {
-      class: 'btn sm',
-      style: { flex: 1, minWidth: '85px' },
-      onclick: () => { PodTimer.addMarker('Retake / Line flub', 'retake'); PodAudio.playPing(); toast('Logged retake marker'); flash(); }
-    }, '🔖 Retake'),
-    h('button', {
-      class: 'btn sm',
-      style: { flex: 1, minWidth: '85px' },
-      onclick: () => { PodTimer.addMarker('Highlight / Golden quote', 'quote'); PodAudio.playPing(); toast('Logged highlight marker'); flash(); }
-    }, '⭐ Clip'),
-    h('button', {
-      class: 'btn sm',
-      style: { flex: 1, minWidth: '85px' },
-      onclick: () => { PodTimer.addMarker('Cut point / Dead air', 'cut'); PodAudio.playPing(); toast('Logged cut marker'); flash(); }
-    }, '✂️ Cut'),
-    h('button', {
-      class: 'btn sm',
-      style: { flex: 1, minWidth: '85px' },
-      onclick: () => { PodTimer.addMarker('Audio glitch / Mic pop', 'glitch'); PodAudio.playPing(); toast('Logged glitch marker'); flash(); }
-    }, '⚠️ Glitch'));
-
-  const quickInp = h('input', {
-    class: 'inp sm',
-    placeholder: '+ Type marker description, press Enter',
-    onkeydown: e => {
-      if (e.key === 'Enter' && e.target.value.trim()) {
-        PodTimer.addMarker(e.target.value.trim(), 'custom');
-        PodAudio.playPing();
-        e.target.value = '';
-        toast('Marker logged');
-        flash();
-      }
-    }
-  });
-
-  const markerList = h('div', {
-    class: 'lv-log',
-    style: { maxHeight: '200px', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }
-  },
-  PodTimer.markers.length ? PodTimer.markers.map((m, i) => h('div', {
-    class: 'lv-ev',
-    style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 6px', fontSize: '12.5px' }
-  },
-  h('span', { class: 'pill', style: { fontFamily: 'var(--mono)', fontSize: '11px', flex: 'none' } }, fmtTimeSec(m.time)),
-  h('span', { style: { flex: 1 } }, m.label),
-  h('button', {
-    class: 'icon-btn danger',
-    title: 'Delete marker',
-    onclick: () => { PodTimer.markers.splice(i, 1); flash(); }
-  }, icon('trash', 12)))) : h('div', { class: 'small muted', style: { margin: '6px 0' } }, 'No markers logged yet. Click a quick button or type above.'));
-
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '8px' } },
-      h('h3', {}, 'Editor Markers Pad'),
-      h('span', { class: 'grow' }),
-      h('button', {
-        class: 'btn sm ghost',
-        onclick: () => {
-          if (!PodTimer.markers.length) return toast('No markers to copy', true);
-          const lines = PodTimer.markers.map(m => `[${fmtTimeSec(m.time)}] ${m.label}`).join('\n');
-          navigator.clipboard.writeText(lines);
-          toast('Copied markers for audio editor');
-        }
-      }, icon('copy', 13), 'Copy for editor')),
-    quickPad,
-    quickInp,
-    markerList);
-}
-
-function renderLiveIssuesPanel(flash) {
-  const issues = PodTimer.issues || [];
-  const quick = h('input', {
-    class: 'inp sm',
-    placeholder: '+ Log issue (e.g. mic distortion, dog barking), Enter',
-    onkeydown: e => {
-      if (e.key === 'Enter' && e.target.value.trim()) {
-        PodTimer.addIssue(e.target.value.trim(), 'Audio', 'Medium');
-        e.target.value = '';
-        toast('Logged technical issue');
-        flash();
-      }
-    }
-  });
-
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '8px' } },
-      h('h3', {}, 'Studio Issues Log'),
-      h('span', { class: 'grow' }),
-      h('div', { class: 'row', style: { gap: '4px' } },
-        h('button', { class: 'btn sm ghost', onclick: () => { PodTimer.addIssue('Mic clipping / distortion', 'Audio', 'High'); flash(); } }, 'Mic clip'),
-        h('button', { class: 'btn sm ghost', onclick: () => { PodTimer.addIssue('Background noise / siren', 'Room', 'Medium'); flash(); } }, 'Noise'))),
-    quick,
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', maxHeight: '160px', overflow: 'auto' } },
-      issues.length ? issues.map((iss, idx) => h('div', {
-        class: 'lv-issue',
-        style: { display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 6px', fontSize: '12px' }
-      },
-      h('span', { class: 'pill', style: { fontFamily: 'var(--mono)', fontSize: '10px' } }, fmtTimeSec(iss.time)),
-      h('span', { class: `lv-sev`, style: { background: iss.sev === 'Critical' ? 'var(--danger)' : iss.sev === 'High' ? 'var(--warn)' : 'var(--muted)' } }, iss.sev),
-      h('span', { class: 'clip', style: { flex: 1 } }, iss.msg),
-      h('button', {
-        class: 'icon-btn danger',
-        onclick: () => { issues.splice(idx, 1); flash(); }
-      }, icon('trash', 11)))) : h('div', { class: 'small muted', style: { margin: '6px 0' } }, 'No studio issues logged.')));
-}
-
-function renderLiveGuestPanel(pd, flash) {
-  if (!pd.guests.length) {
-    return h('div', { class: 'lv-panel' },
-      h('h3', { style: { marginBottom: '6px' } }, 'Guest Interview Assistant'),
-      h('p', { class: 'small muted', style: { margin: 0 } }, 'No interview guests added. Add them in Guest prep.'));
-  }
-
-  UI.podLiveGuestIdx = UI.podLiveGuestIdx || 0;
-  const g = pd.guests[UI.podLiveGuestIdx] || pd.guests[0];
-  const qList = (g.questions || '').split('\n').filter(Boolean);
-
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '8px' } },
-      h('h3', {}, 'Guest Assistant'),
-      h('span', { class: 'grow' }),
-      pd.guests.length > 1 ? h('select', {
-        class: 'inp sm',
-        style: { width: 'auto' },
-        onchange: e => { UI.podLiveGuestIdx = +e.target.value; flash(); }
-      }, pd.guests.map((x, i) => h('option', { value: i, selected: i === UI.podLiveGuestIdx }, x.name))) : null),
-    h('div', { class: 'row', style: { gap: '8px', marginBottom: '8px' } },
-      h('b', { style: { fontSize: '15px' } }, g.name),
-      g.pronouns ? h('span', { class: 'pill', style: { fontSize: '11px' } }, g.pronouns) : null,
-      h('span', { class: 'grow' }),
-      g.link ? h('a', {
-        class: 'btn sm primary',
-        href: g.link.startsWith('http') ? g.link : 'https://' + g.link,
-        target: '_blank',
-        rel: 'noreferrer'
-      }, 'Join Studio') : null),
-    g.title ? h('div', { class: 'small muted', style: { marginBottom: '6px' } }, g.title) : null,
-    g.nogo ? h('div', {
-      style: { padding: '6px 10px', background: 'color-mix(in srgb, var(--warn) 10%, transparent)', borderLeft: '3px solid var(--warn)', borderRadius: '2px', marginBottom: '8px', fontSize: '12px', color: 'var(--warn)', fontWeight: 600 }
-    }, `⚠️ Off-Limits: ${g.nogo}`) : null,
-    qList.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' } },
-      h('label', { class: 'lbl small muted' }, 'Questions checklist:'),
-      qList.map((q, idx) => {
-        const key = `${g.id}-${idx}`;
-        const isChecked = PodTimer.checkedQuestions.has(key);
-        return h('label', {
-          class: 'row small',
-          style: {
-            gap: '8px',
-            cursor: 'pointer',
-            padding: '4px 6px',
-            fontSize: '13px',
-            textDecoration: isChecked ? 'line-through' : 'none',
-            color: isChecked ? 'var(--muted)' : 'var(--text)'
-          }
-        },
-        h('input', {
-          type: 'checkbox',
-          checked: isChecked,
-          onchange: e => {
-            e.target.checked ? PodTimer.checkedQuestions.add(key) : PodTimer.checkedQuestions.delete(key);
-            PodTimer.notify();
-          }
-        }),
-        h('span', {}, q));
-      })) : null);
-}
-
-function renderLiveSponsorPanel(pd, flash) {
-  if (!pd.sponsors.length) {
-    return h('div', { class: 'lv-panel' },
-      h('h3', { style: { marginBottom: '6px' } }, 'Sponsor Reads Prompter'),
-      h('p', { class: 'small muted', style: { margin: 0 } }, 'No sponsor reads configured for this episode.'));
-  }
-
-  UI.podLiveSponsorIdx = UI.podLiveSponsorIdx || 0;
-  const sp = pd.sponsors[UI.podLiveSponsorIdx] || pd.sponsors[0];
-
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '8px' } },
-      h('h3', {}, 'Sponsor Reads'),
-      h('span', { class: 'grow' }),
-      pd.sponsors.length > 1 ? h('select', {
-        class: 'inp sm',
-        style: { width: 'auto' },
-        onchange: e => { UI.podLiveSponsorIdx = +e.target.value; flash(); }
-      }, pd.sponsors.map((x, i) => h('option', { value: i, selected: i === UI.podLiveSponsorIdx }, `${x.name} (${x.slot})`))) : null),
-    h('div', { class: 'row', style: { gap: '6px', marginBottom: '8px' } },
-      h('b', { style: { fontSize: '14px' } }, sp.name),
-      h('span', { class: 'pill', style: { fontSize: '11px' } }, sp.slot),
-      h('span', { class: 'grow' }),
-      h('button', {
-        class: 'btn sm ghost',
-        onclick: () => { navigator.clipboard.writeText(sp.copy || ''); toast('Ad copy copied'); }
-      }, icon('copy', 12), 'Copy')),
-    sp.url || sp.code ? h('div', { class: 'row', style: { gap: '6px', marginBottom: '6px' } },
-      sp.url ? h('span', { class: 'pill', style: { fontSize: '11px' } }, sp.url) : null,
-      sp.code ? h('span', { class: 'pill', style: { fontSize: '11px', fontWeight: 700 } }, sp.code) : null) : null,
-    h('div', {
-      style: { padding: '8px 10px', background: 'var(--surface2)', borderRadius: '3px', fontStyle: 'italic', fontSize: '13px', lineHeight: '1.45', maxHeight: '140px', overflow: 'auto' }
-    }, sp.copy || sp.points),
-    h('div', { class: 'row', style: { marginTop: '8px' } },
-      h('label', { class: 'row small', style: { gap: '6px', cursor: 'pointer', fontWeight: 600 } },
-        h('input', {
-          type: 'checkbox',
-          checked: !!sp.recorded,
-          onchange: e => { sp.recorded = e.target.checked; Store.touch(); flash(); }
-        }),
-        'Marked as recorded')));
-}
-
-function renderLivePreflightPanel(flash) {
-  const checks = [
-    ['levels', 'Mic input levels verified (-12 dB peak)'],
-    ['backup', '32-bit float / local backup recording active'],
-    ['room', 'HVAC, fans & room noise silenced'],
-    ['headphones', 'Zero-latency headphone monitor confirmed'],
-    ['notify', 'Phone & computer notifications silenced'],
-    ['water', 'Hydration / water at hand'],
-  ];
-
-  const doneCount = checks.filter(([k]) => !!PodTimer.preflight[k]).length;
-
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '8px' } },
-      h('h3', {}, 'Pre-Flight Audio Check'),
-      h('span', { class: 'grow' }),
-      h('span', { class: 'pill', style: { fontSize: '11px', background: doneCount === checks.length ? 'var(--ok)' : 'var(--surface2)', color: doneCount === checks.length ? '#fff' : 'inherit' } },
-        doneCount === checks.length ? 'Studio Ready ✓' : `${doneCount}/${checks.length} Ready`)),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-      checks.map(([k, label]) => {
-        const isChecked = !!PodTimer.preflight[k];
-        return h('label', {
-          class: 'row small',
-          style: { gap: '8px', cursor: 'pointer', padding: '3px 0' }
-        },
-        h('input', {
-          type: 'checkbox',
-          checked: isChecked,
-          onchange: e => {
-            PodTimer.preflight[k] = e.target.checked;
-            PodTimer.notify();
-          }
-        }),
-        h('span', { style: { color: isChecked ? 'var(--ok)' : 'var(--text)' } }, label));
-      })));
-}
-
-function renderLiveTalentPanel(P, pd, flash) {
-  const talentList = [];
-  if (P.cast && P.cast.length) {
-    P.cast.forEach(c => talentList.push({ id: c.id, name: c.name || c.role, role: 'Host / Talent' }));
-  } else {
-    talentList.push({ id: 'host-1', name: 'Host', role: 'Main Host' });
-  }
-  pd.guests.forEach(g => {
-    talentList.push({ id: g.id, name: g.name, role: 'Guest', link: g.link });
-  });
-
-  const STATUSES = ['In Studio', 'Green Room', 'Levels Checked', 'Live on Mic', 'Wrapped'];
-
-  return h('div', { class: 'lv-panel' },
-    h('h3', { style: { marginBottom: '8px' } }, 'Talent & Guest Check-In'),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-      talentList.map(t => {
-        const curSt = PodTimer.talentStatus[t.id] || (t.role.includes('Host') ? 'Live on Mic' : 'In Studio');
-        return h('div', {
-          class: 'row',
-          style: { padding: '5px 8px', background: 'var(--surface2)', borderRadius: '3px', fontSize: '12.5px', alignItems: 'center' }
-        },
-        h('b', { style: { flex: 1 } }, t.name),
-        h('span', { class: 'small muted', style: { marginRight: '6px' } }, t.role),
-        h('button', {
-          class: 'pill',
-          style: {
-            fontSize: '10.5px',
-            cursor: 'pointer',
-            border: 'none',
-            background: curSt === 'Live on Mic' ? '#e5484d' : curSt === 'Levels Checked' ? '#1e8e54' : 'var(--surface)',
-            color: curSt === 'Live on Mic' || curSt === 'Levels Checked' ? '#fff' : 'inherit'
-          },
-          title: 'Click to cycle status',
-          onclick: () => {
-            const nextIdx = (STATUSES.indexOf(curSt) + 1) % STATUSES.length;
-            PodTimer.talentStatus[t.id] = STATUSES[nextIdx];
-            flash();
-          }
-        }, curSt));
-      })));
-}
-
-function renderLiveTasksPanel(P, flash) {
-  const taskList = (P.tasks || []).filter(t => t.status !== 'done');
-  const quick = h('input', {
-    class: 'inp sm',
-    placeholder: '+ Add task for this episode, press Enter',
-    onkeydown: e => {
-      if (e.key === 'Enter' && e.target.value.trim()) {
-        const t = newTask(e.target.value.trim(), 'todo');
-        P.tasks.push(t);
-        Store.touch();
-        e.target.value = '';
-        toast('Task added');
-        flash();
-      }
-    }
-  });
-
-  return h('div', { class: 'lv-panel' },
-    h('div', { class: 'row', style: { marginBottom: '8px' } },
-      h('h3', {}, 'Episode Tasks'),
-      h('span', { class: 'grow' }),
-      h('a', { class: 'btn sm ghost', href: `#/p/${P.id}/tasks` }, 'All tasks')),
-    quick,
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' } },
-      taskList.length ? taskList.slice(0, 6).map(t => h('div', {
-        class: 'lv-task',
-        style: { display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 6px', fontSize: '12.5px' }
-      },
-      h('button', {
-        class: 'lv-chk ' + t.status,
-        onclick: () => {
-          t.status = t.status === 'todo' ? 'doing' : 'done';
-          Store.touch();
-          flash();
-        }
-      }, t.status === 'doing' ? '◐' : ''),
-      h('span', { class: 'clip', style: { flex: 1 } }, t.title))) : h('div', { class: 'small muted', style: { margin: '6px 0' } }, 'No open tasks for this episode.')));
+function renderEmbeddedGuestBox(g) {
+  return h('div', { class: 'ld-inset guest' }, h('div', { class: 'ld-row' }, h('b', {}, `Guest · ${g.name}`), g.title ? h('span', { class: 'ld-meta' }, g.title) : null, h('span', { class: 'grow' }), g.link ? h('a', { class: 'btn sm', href: /^https?:/.test(g.link) ? g.link : 'https://' + g.link, target: '_blank', rel: 'noreferrer' }, 'Join studio') : null),
+    g.nogo ? h('div', { class: 'ld-warn' }, `Off limits: ${g.nogo}`) : null);
 }
 
 /* ---------------------------------------------------------------
-   Episode Recording Session Wrap & Editor Hand-off Modal
+   Session wrap: the editor's hand-off sheet, also saved to the daily report
    --------------------------------------------------------------- */
-function openSessionWrapModal(P, pd, rundown) {
-  // Ensure a shoot day exists in P.days so DPR can store the report
-  if (!P.days || !P.days.length) {
-    const today = new Date().toISOString().slice(0, 10);
-    P.days = P.days || [];
-    P.days.push({
-      id: uid(),
-      date: today,
-      num: 1,
-      cs: { shoot: '10:00', crew: '09:30', lunch: '13:00' },
-      sceneIds: [],
-      title: `Episode Recording`
-    });
-  }
-  const d = P.days.find(x => x.id === UI.liveDay) || P.days[0];
-  UI.liveDay = d.id;
-  P.reports = P.reports || {};
-  const R = P.reports[d.id] = P.reports[d.id] || (typeof newReport === 'function' ? newReport() : { t: {}, scenes: {}, notes: '' });
-
-  const startMs = PodTimer.startTime || (Date.now() - PodTimer.elapsedSec * 1000);
-  const endMs = Date.now();
-  R.t.crew = R.t.crew || podFromMin(Math.round(podMsMin(startMs)));
-  R.t.wrap = podFromMin(Math.round(podMsMin(endMs)));
-
-  // Build the complete hand-off summary
-  const coveredCount = rundown.filter(s => s.status === 'Covered').length;
-  const cutCount = rundown.filter(s => s.status === 'Cut').length;
-  const totalRecSec = PodTimer.elapsedSec;
-  const markersList = PodTimer.markers.slice().reverse(); // chronological order
-
-  let summaryText = `========================================\n`;
-  summaryText += `EPISODE RECORDING SESSION WRAP REPORT\n`;
-  summaryText += `Show: ${P.title}\n`;
-  summaryText += `Episode: ${pd.epNumber || '1'}${pd.season ? ' (Season ' + pd.season + ')' : ''}\n`;
-  summaryText += `Date: ${new Date().toISOString().slice(0, 10)}\n`;
-  summaryText += `Total Recorded Time: ${fmtTimeSec(totalRecSec)}\n`;
-  summaryText += `Segments Covered: ${coveredCount} / ${rundown.length} (${cutCount} cut)\n`;
-  summaryText += `Markers Logged: ${markersList.length}\n`;
-  summaryText += `========================================\n\n`;
-
-  summaryText += `--- SEGMENTS RUNNING ORDER ---\n`;
-  rundown.forEach((s, idx) => {
-    summaryText += `#${idx + 1} [${s.status.toUpperCase()}] ${s.title} (${s.dur}m planned)\n`;
-  });
-  summaryText += `\n`;
-
-  if (markersList.length) {
-    summaryText += `--- AUDIO EDITOR MARKERS (TIMECODES) ---\n`;
-    markersList.forEach(m => {
-      summaryText += `[${fmtTimeSec(m.time)}] ${m.kind ? m.kind.toUpperCase() + ': ' : ''}${m.label}\n`;
-    });
-    summaryText += `\n`;
-  }
-
-  if (pd.sponsors.length) {
-    summaryText += `--- SPONSOR READS STATUS ---\n`;
-    pd.sponsors.forEach(sp => {
-      summaryText += `[${sp.recorded ? 'RECORDED ✓' : 'NOT RECORDED'}] ${sp.name} (${sp.slot}) - Code: ${sp.code || 'N/A'}\n`;
-    });
-    summaryText += `\n`;
-  }
-
-  if (PodTimer.issues && PodTimer.issues.length) {
-    summaryText += `--- TECHNICAL & STUDIO ISSUES LOG ---\n`;
-    PodTimer.issues.forEach(iss => {
-      summaryText += `[${fmtTimeSec(iss.time)}] [${iss.sev}] ${iss.cat}: ${iss.msg}\n`;
-    });
-    summaryText += `\n`;
-  }
-
-  // Store into DPR notes and incidents
-  R.notes = [R.notes, summaryText].filter(Boolean).join('\n\n');
-  if (PodTimer.issues && PodTimer.issues.length) {
-    R.incidents = PodTimer.issues.map(iss => `[${iss.sev}] ${iss.cat}: ${iss.msg}`).join('\n');
-  }
-  R.media = `Audio: WAV 48kHz / 24-bit · Duration: ${fmtTimeSec(totalRecSec)}`;
-  Store.touch();
-
-  // Create modal dialog
-  const overlay = h('div', { class: 'modal-ov' });
-  const modal = h('div', { class: 'modal', style: { maxWidth: '720px', width: '92%' } },
-    h('div', { class: 'modal-h' },
-      h('h3', {}, 'Recording Session Wrapped!'),
-      h('button', { class: 'icon-btn', onclick: () => overlay.remove() }, icon('close', 16))),
-    h('div', { class: 'modal-b', style: { maxHeight: '70vh', overflow: 'auto' } },
-      h('div', { class: 'row', style: { gap: '12px', marginBottom: '16px' } },
-        h('div', { class: 'card', style: { flex: 1, padding: '12px', textAlign: 'center' } },
-          h('div', { class: 'small muted' }, 'Total Recorded'),
-          h('b', { style: { fontSize: '20px', fontFamily: 'var(--mono)', color: 'var(--accent)' } }, fmtTimeSec(totalRecSec))),
-        h('div', { class: 'card', style: { flex: 1, padding: '12px', textAlign: 'center' } },
-          h('div', { class: 'small muted' }, 'Segments Covered'),
-          h('b', { style: { fontSize: '20px' } }, `${coveredCount} / ${rundown.length}`)),
-        h('div', { class: 'card', style: { flex: 1, padding: '12px', textAlign: 'center' } },
-          h('div', { class: 'small muted' }, 'Editor Markers'),
-          h('b', { style: { fontSize: '20px', color: 'var(--ok)' } }, String(markersList.length)))),
-      h('label', { class: 'lbl' }, 'Audio Editor Hand-Off Sheet (Auto-saved to DPR):'),
-      h('textarea', {
-        class: 'inp',
-        rows: 12,
-        readonly: true,
-        style: { fontFamily: 'var(--mono)', fontSize: '12px', lineHeight: '1.4', background: 'var(--surface2)' }
-      }, summaryText)),
-    h('div', { class: 'modal-f', style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-      h('button', {
-        class: 'btn primary',
-        onclick: () => {
-          navigator.clipboard.writeText(summaryText);
-          toast('Copied hand-off sheet to clipboard!');
-        }
-      }, icon('copy', 14), 'Copy for Audio Editor'),
-      h('a', {
-        class: 'btn',
-        href: `#/p/${P.id}/dpr`,
-        onclick: () => overlay.remove()
-      }, icon('reports', 14), 'View Full DPR'),
-      h('span', { class: 'grow' }),
-      h('button', { class: 'btn', onclick: () => overlay.remove() }, 'Close')));
-  overlay.append(modal);
-  document.body.append(overlay);
+function openSessionWrapModal(P, pd, rundown, L) {
+  if (!P.days.length) P.days.push(Object.assign(newDay(P, todayISO()), { title: 'Episode recording' }));
+  const d = P.days.find(x => x.id === UI.liveDay) || P.days.find(x => x.date === todayISO()) || P.days[0]; UI.liveDay = d.id;
+  const R = dprOf(P, d), start = PodTimer.startTime || (Date.now() - PodTimer.elapsedSec * 1000), rec = PodTimer.elapsedSec;
+  R.t.crew = R.t.crew || fromMin(Math.round(msMin(start))); R.t.wrap = fromMin(Math.round(msMin(Date.now())));
+  const covered = rundown.filter(s => s.status === 'Covered').length, cut = rundown.filter(s => s.status === 'Cut').length, marks = [...PodTimer.markers].reverse(), issues = L.issues;
+  const lines = [`EPISODE RECORDING — HAND-OFF`, `Show: ${P.title}`, `Episode: ${pd.epNumber || '1'}${pd.season ? ' (season ' + pd.season + ')' : ''}`, `Date: ${todayISO()}`, `Recorded: ${fmtTimeSec(rec)}`, `Segments covered: ${covered} of ${rundown.length}${cut ? ` (${cut} cut)` : ''}`, '',
+    'RUNNING ORDER', ...rundown.map((s, i) => `${i + 1}. [${s.status.toUpperCase()}] ${s.title} (${s.dur} min planned)`), '',
+    ...(marks.length ? ['EDITOR MARKERS', ...marks.map(m => `[${fmtTimeSec(m.time)}] ${m.kind && m.kind !== 'marker' ? m.kind.toUpperCase() + ': ' : ''}${m.label}`), ''] : []),
+    ...(pd.sponsors.length ? ['SPONSOR READS', ...pd.sponsors.map(s => `[${s.recorded ? 'RECORDED' : 'NOT RECORDED'}] ${s.name} (${s.slot})${s.code ? ' — code ' + s.code : ''}`), ''] : []),
+    ...(issues.length ? ['PROBLEMS', ...issues.map(i => `[${i.tc != null ? fmtTimeSec(i.tc) : clockTxt(msMin(i.at))}] [${i.sev}] ${i.cat}: ${i.title}${i.status === 'Resolved' ? ' (resolved)' : ''}`)] : [])];
+  const text = lines.join('\n');
+  R.notes = [R.notes, text].filter(Boolean).join('\n\n'); if (issues.length) R.incidents = issues.map(i => `[${i.sev}] ${i.cat}: ${i.title}`).join('\n'); R.media = `Audio · ${fmtTimeSec(rec)} recorded`; Store.touch();
+  const stat = (l, v) => h('div', { class: 'ld-tile' }, h('span', { class: 'ld-l' }, l), h('b', { class: 'ld-v' }, v));
+  modal({ title: 'Session wrapped', wide: true, body: h('div', {}, h('div', { class: 'ld-head' }, stat('Recorded', fmtTimeSec(rec)), stat('Segments covered', `${covered}/${rundown.length}`), stat('Markers', String(marks.length)), stat('Problems', String(issues.length))),
+    h('label', { class: 'lbl' }, 'Hand-off sheet for the editor — also saved in the daily report'), h('textarea', { class: 'inp mono', rows: 12, readOnly: true, value: text })),
+    buttons: [{ label: 'Reports', onClick: () => { location.hash = `#/p/${P.id}/reports`; } }, { label: 'Close' }, { label: 'Copy for the editor', primary: true, onClick: () => { navigator.clipboard.writeText(text); toast('Hand-off sheet copied'); return false; } }] });
 }
 

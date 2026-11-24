@@ -11,13 +11,13 @@ const STRUCTURES = {
 const CARD_COLORS = ['', '#e5484d', '#f76b15', '#ca8a04', '#30a46c', '#0091ff', '#6e56cf', '#d6409f'];
 
 Views.cards = function (root) {
-  const P = Store.P; let dragId = null;
+  const P = Store.P;
   const grid = h('div', { class: 'cork' });
   const structSel = h('select', { class: 'inp', style: { width: 'auto' }, title: 'Overlay a story structure on your scenes', onchange: e => { P.settings.structure = e.target.value; Store.touch(); draw(); } }, h('option', { value: '' }, 'Story structure: off'), Object.entries(STRUCTURES).map(([k, v]) => h('option', { value: k, selected: k === P.settings.structure }, v.label)));
   const filterSel = h('select', { class: 'inp', style: { width: 'auto' }, onchange: () => draw() }, h('option', { value: '' }, 'All colours'), CARD_COLORS.filter(Boolean).map((c, i) => h('option', { value: c }, 'Colour ' + (i + 1))));
   root.parentElement.classList.remove('noscroll');
   root.append(h('div', { class: 'toolbar' }, h('button', { class: 'btn primary', onclick: () => addSceneAfter(null) }, icon('plus', 15), 'Add scene'), filterSel, structSel, h('span', { class: 'grow' }),
-    h('span', { class: 'small muted' }, 'Drag a card by its grip to reorder the scenes in your script. Colour-code cards to track threads, locations or storylines.')), grid);
+    h('span', { class: 'small muted' }, (Device.touchOn() ? 'Press and hold a card’s bottom strip, then drag it to reorder the scenes in your script.' : 'Drag a card by its grip to reorder the scenes in your script.') + ' Colour-code cards to track threads, locations or storylines.')), grid);
 
   function blockOf(id) { return P.blocks.find(b => b.id === id); }
   function addSceneAfter(s) {
@@ -47,23 +47,19 @@ Views.cards = function (root) {
       if (s.act && s.act !== lastAct) grid.append(h('div', { class: 'actsep' }, s.act)); lastAct = s.act;
       const meta = P.sceneMeta[s.id] = P.sceneMeta[s.id] || {}, blk = blockOf(s.id);
       const shots = P.shots.filter(x => x.sceneId === s.id).length;
-      const card = h('div', { class: 'icard', 'data-sid': s.id, style: { '--cc': s.color || '' },
-        ondragstart: e => { dragId = s.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', s.id); setTimeout(() => card.classList.add('dragging'), 0); },
-        ondragend: () => { card.draggable = false; card.classList.remove('dragging'); $$('.icard.over-l,.icard.over-r').forEach(c => c.classList.remove('over-l', 'over-r')); },
-        ondragover: e => { if (!dragId) return; e.preventDefault(); const r = card.getBoundingClientRect(), right = e.clientX > r.left + r.width / 2; card.classList.toggle('over-r', right); card.classList.toggle('over-l', !right); },
-        ondragleave: () => card.classList.remove('over-l', 'over-r'),
-        ondrop: e => { e.preventDefault(); const r = card.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2; card.classList.remove('over-l', 'over-r'); if (moveSceneBlocks(P, dragId, s.id, after)) { Store.touch(); draw(); toast('Scene moved in the script'); } dragId = null; } },
+      const card = h('div', { class: 'icard', 'data-sid': s.id, style: { '--cc': s.color || '' } },
         h('div', { class: 'hd' }, h('span', { class: 'n' }, s.num),
           h('textarea', { class: 'auto heading', rows: 1, placeholder: 'INT. LOCATION - DAY', value: blk.text, oninput: e => { blk.text = e.target.value.toUpperCase(); if (e.target.value !== blk.text) e.target.value = blk.text; autosize(e.target); Store.touch(); } })),
         h('div', { class: 'beats' }, h('span', { class: 'small muted' }, (() => { const sp = span(s); return sp.a === sp.b ? `p.${sp.a}` : `pp.${sp.a}–${sp.b}`; })()), beatsFor(s).map(([n]) => h('span', { class: 'beat' }, '★ ' + n))),
         h('textarea', { class: 'auto', rows: 3, placeholder: 'What happens in this scene…', value: meta.synopsis || '', oninput: e => { meta.synopsis = e.target.value; autosize(e.target); Store.touch(); } }),
         h('div', { class: 'swatches' }, CARD_COLORS.map(c => h('button', { class: c === (s.color || '') ? 'on' : '', style: { background: c || 'var(--surface2)' }, title: c ? 'Colour label' : 'No colour', 'aria-label': 'colour', onclick: () => { if (c) meta.color = c; else delete meta.color; Store.touch(); draw(); } }))),
-        h('div', { class: 'foot', title: 'Drag to reorder', onmousedown: () => { card.draggable = true; }, onmouseup: () => { card.draggable = false; } },
+        h('div', { class: 'foot', title: 'Drag to reorder' },
           icon('grid', 14), h('span', {}, `${fmtEighths(s.eighths)} pg · ${s.chars.size} chars${shots ? ` · ${shots} shots` : ''}`), h('span', { class: 'grow' }),
-          h('button', { class: 'icon-btn', style: { width: '26px', height: '26px' }, title: 'Open in script', onmousedown: e => e.stopPropagation(), onclick: () => { UI.scene = s.id; location.hash = `#/p/${P.id}/script`; } }, icon('pen', 14)),
-          h('button', { class: 'icon-btn', style: { width: '26px', height: '26px' }, title: 'Add a scene after this one', onmousedown: e => e.stopPropagation(), onclick: () => addSceneAfter(s) }, icon('plus', 14)),
-          h('button', { class: 'icon-btn danger', style: { width: '26px', height: '26px' }, title: 'Delete scene', onmousedown: e => e.stopPropagation(), onclick: () => deleteScene(s) }, icon('trash', 14))));
-      grid.append(card);
+          h('button', { class: 'icon-btn', style: { width: '26px', height: '26px' }, title: 'Open in script', onpointerdown: e => e.stopPropagation(), onclick: () => { UI.scene = s.id; location.hash = `#/p/${P.id}/script`; } }, icon('pen', 14)),
+          h('button', { class: 'icon-btn', style: { width: '26px', height: '26px' }, title: 'Add a scene after this one', onpointerdown: e => e.stopPropagation(), onclick: () => addSceneAfter(s) }, icon('plus', 14)),
+          h('button', { class: 'icon-btn danger', style: { width: '26px', height: '26px' }, title: 'Delete scene', onpointerdown: e => e.stopPropagation(), onclick: () => deleteScene(s) }, icon('trash', 14))));
+      /* drag by the bottom strip, so the text boxes on the card stay editable */
+      grid.append(DnD.item(card, 'scene', s.id, (id, after) => { if (moveSceneBlocks(P, id, s.id, after)) { Store.touch(); draw(); toast('Scene moved in the script'); } }, { edge: 'x', handle: card.querySelector('.foot') }));
     });
     autosizeAll(grid);
   }

@@ -54,8 +54,8 @@ Views.setups = function (root) {
     if (!(await confirmBox(msg, 'Delete'))) return;
     const b = P.blocks.findIndex(x => x.id === s.id); P.blocks.splice(b, s.end - s.idx); Store.touch(); draw();
   };
-  function card(s, i) {
-    const b = P.blocks[s.idx], parts = setupParts(b), meta = P.sceneMeta[s.id] = P.sceneMeta[s.id] || {}, scenes = getScenes(P);
+  function card(s, i, all) {
+    const b = P.blocks[s.idx], parts = setupParts(b), meta = P.sceneMeta[s.id] = P.sceneMeta[s.id] || {}, scenes = all || getScenes(P);
     const notesBlk = P.blocks.slice(s.idx + 1, s.end).find(x => x.type === 'action') || (() => { const nb = { id: uid(), type: 'action', text: '' }; P.blocks.splice(s.idx + 1, 0, nb); return nb; })();
     const recompose = () => { b.text = setupHeading(parts.name, parts.loc, parts.time); const L = P.locations.find(l => l.name.toLowerCase() === (parts.loc || '').trim().toLowerCase()); if (L) meta.locationId = L.id; else if (meta.locationId && !P.locations.some(l => l.id === meta.locationId && l.name.toLowerCase() === parts.loc.trim().toLowerCase())) delete meta.locationId; Store.touch(); };
     const shots = P.photo.shots.filter(x => x.sceneId === s.id), done = shots.filter(x => ['Approved', 'Delivered'].includes(x.status)).length;
@@ -78,6 +78,10 @@ Views.setups = function (root) {
         h('a', { class: 'btn sm', href: `#/p/${P.id}/photoshots`, onclick: () => { UI.phSetup = s.id; } }, icon('camera', 14), 'Shots'), h('a', { class: 'btn sm', href: `#/p/${P.id}/breakdown`, onclick: () => { UI.scene = s.id; } }, icon('tag', 14), 'Breakdown')));
   }
   function draw() {
+    /* every setup gets its notes line before drawing (back to front, so inserting never shifts a setup still to come) */
+    let added = false;
+    getScenes(P).reverse().forEach(sc => { if (!P.blocks.slice(sc.idx + 1, sc.end).some(x => x.type === 'action')) { P.blocks.splice(sc.idx + 1, 0, { id: uid(), type: 'action', text: '' }); added = true; } });
+    if (added) Store.touch();
     const scenes = getScenes(P); wrap.replaceChildren(pageShell('Setups & looks', `${scenes.length} setup${scenes.length === 1 ? '' : 's'} — each is a lighting set-up, look or scene you shoot. They drive the schedule, call sheets and breakdown.`,
       h('button', { class: 'btn', onclick: () => printTable('Setup list', ['#', 'Setup', 'Location', 'Slot', 'Est. min', 'Concept', 'Shots'], scenes.map(s => { const pt = setupParts(P.blocks[s.idx]); return [s.num, pt.name, pt.loc, pt.time, (P.sceneMeta[s.id] || {}).est || '', s.synopsis, P.photo.shots.filter(x => x.sceneId === s.id).length]; })) }, icon('print', 15), 'Print'),
       h('button', { class: 'btn primary', onclick: () => addSetup() }, icon('plus', 15), 'Add setup')), list);
@@ -156,12 +160,13 @@ Views.photoshots = function (root) {
     return box;
   }
   function boardView() {
-    const dragSt = { id: null }, vis = visible();
+    const vis = visible();
     return h('div', { class: 'pk-board' }, SHOT_STATUS.map(st => { const col = vis.filter(s => s.status === st);
-      return h('div', { class: 'pk-col', ondragover: e => { e.preventDefault(); e.currentTarget.classList.add('over'); }, ondragleave: e => e.currentTarget.classList.remove('over'), ondrop: e => { e.preventDefault(); const s = ph.shots.find(x => x.id === dragSt.id || x.id === e.dataTransfer.getData('text/plain')); if (s) setStatus(s, st); } },
+      return DnD.zone(h('div', { class: 'pk-col' },
         h('div', { class: 'pk-h', style: { borderTopColor: SHOT_TONE[st] } }, h('b', {}, st), h('span', { class: 'pill' }, col.length)),
-        col.map(s => h('div', { class: 'pk-card', draggable: 'true', ondragstart: e => { dragSt.id = s.id; e.dataTransfer.setData('text/plain', s.id); }, onclick: () => { UI.phView = 'list'; F.setup = s.sceneId; UI.phOpen = s.id; draw(); } },
-          s.ref ? h('div', { class: 'pk-img', style: { backgroundImage: `url(${s.ref})` } }) : null, h('div', { class: 'row', style: { gap: '6px' } }, h('b', {}, photoShotLabel(P, s, scenes)), s.hero ? h('span', { style: { color: '#e8a40c' } }, '★') : null), h('div', { class: 'small' }, s.title || '—'), s.subject ? h('div', { class: 'small muted' }, s.subject) : null))); }));
+        col.map(s => DnD.source(h('div', { class: 'pk-card', onclick: () => { UI.phView = 'list'; F.setup = s.sceneId; UI.phOpen = s.id; draw(); } },
+          s.ref ? h('div', { class: 'pk-img', style: { backgroundImage: `url(${s.ref})` } }) : null, h('div', { class: 'row', style: { gap: '6px' } }, h('b', {}, photoShotLabel(P, s, scenes)), s.hero ? h('span', { style: { color: '#e8a40c' } }, '★') : null), h('div', { class: 'small' }, s.title || '—'), s.subject ? h('div', { class: 'small muted' }, s.subject) : null), 'phshot', s.id))),
+        'phshot', id => { const s = ph.shots.find(x => x.id === id); if (s) setStatus(s, st); }); }));
   }
   function draw() {
     scenes = getScenes(P); const all = ph.shots.filter(s => scenes.some(x => x.id === s.sceneId)), must = all.filter(s => s.must !== false), done = must.filter(s => ['Shot', 'Selected', 'Retouching', 'Client review', 'Approved', 'Delivered'].includes(s.status)).length;

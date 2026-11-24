@@ -39,6 +39,7 @@ Views.script = function (root) {
   const defType = DEFAULT_TYPE[P.mode];
   const els = new Map();
   let curId = null, navOpen = innerWidth > 1100, focusMode = false, navMode = 'scenes';
+  let kbar = null, kbarT = 0;   // the touch writing bar (built on first focus)
 
   /* ---------- history ---------- */
   const hist = { s: [], i: -1 }; let pend = null;
@@ -72,7 +73,7 @@ Views.script = function (root) {
   const nav = h('div', { class: 'navp' + (navOpen ? '' : ' closed') },
     h('div', { class: 'navp-h' }, h('span', { class: 'grow' }, 'Outline'), h('button', { class: 'btn sm', onclick: addScene }, icon('plus', 14), 'Scene')), navSeg, navList);
   const typeSel = h('select', { class: 'typesel', title: 'Element type (Tab cycles, Ctrl+1…8 sets)', onchange: () => { const b = curBlock(); if (b) { setType(b, typeSel.value); focusBlock(b.id, els.get(b.id).ta.selectionStart); } } },
-    types.map((t, i) => h('option', { value: t.k }, `${t.label}  (Ctrl+${i + 1})`)));
+    types.map((t, i) => h('option', { value: t.k }, Device.touchOn() ? t.label : `${t.label}  (Ctrl+${i + 1})`)));
   const undoBtn = ibtn('undo', 'Undo (Ctrl+Z)', undo), redoBtn = ibtn('redo', 'Redo (Ctrl+Y)', redo);
   const status = h('div', { class: 'statusbar' });
   const findBar = h('div', { class: 'findbar hidden' });
@@ -116,8 +117,11 @@ Views.script = function (root) {
   /* ---------- helpers ---------- */
   const curBlock = () => P.blocks.find(b => b.id === curId);
   const idx = b => P.blocks.indexOf(b);
-  function fit(ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
+  /* lines size themselves with CSS field-sizing where supported (Chrome / Android), so the costly
+     measure-every-line pass only runs on older browsers */
+  function fit(ta) { if (AUTO_FIELD) return; ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
   function fitAll() {
+    if (AUTO_FIELD) return;
     const l = [...els.values()].map(x => x.ta);
     l.forEach(t => t.style.height = 'auto'); const hs = l.map(t => t.scrollHeight); l.forEach((t, i) => t.style.height = hs[i] + 'px');
   }
@@ -129,7 +133,10 @@ Views.script = function (root) {
     keepVisible(e.el);
   }
   function keepVisible(el) {
-    const r = el.getBoundingClientRect(), s = scroller.getBoundingClientRect();
+    const r = el.getBoundingClientRect(), s0 = scroller.getBoundingClientRect(), vv = window.visualViewport;
+    /* the part of the editor you can actually see: above the on-screen keyboard and the writing bar */
+    const visBottom = Math.min(s0.bottom, vv ? vv.offsetTop + vv.height - (kbar && kbar.classList.contains('on') ? kbar.offsetHeight : 0) : s0.bottom);
+    const s = { top: s0.top, bottom: visBottom, height: visBottom - s0.top };
     if (focusMode) scroller.scrollTop += r.top - (s.top + s.height * 0.4);
     else if (r.bottom > s.bottom - 70) scroller.scrollTop += r.bottom - s.bottom + 140;
     else if (r.top < s.top + 20) scroller.scrollTop += r.top - s.top - 100;
@@ -260,7 +267,7 @@ Views.script = function (root) {
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if (mod && k === 'y') { e.preventDefault(); redo(); return; }
     if (mod && k === 'f') { e.preventDefault(); openFind(); return; }
-    if (mod && k === 's') { e.preventDefault(); flushPending(); Store.flush(); toast('Saved'); return; }
+    if (mod && k === 's') { e.preventDefault(); flushPending(); Store.flush(true); toast('Saved'); return; }
     if (e.key === 'Tab') { e.preventDefault(); cycleType(b, e.shiftKey ? -1 : 1); return; }
     if (e.key === 'Enter' && !e.shiftKey && !mod) { e.preventDefault(); splitBlock(b, ta); return; }
     if (e.key === 'Enter' && mod) { e.preventDefault(); insertAfter(b, newBlock(defType), 0); return; }
@@ -402,7 +409,6 @@ Views.script = function (root) {
   }
 
   /* ---------- outline (scenes / notes) ---------- */
-  let dragId = null;
   function renderNav() {
     navList.innerHTML = '';
     if (navMode === 'notes') {
@@ -419,17 +425,11 @@ Views.script = function (root) {
     sc.forEach(s => {
       if (s.act !== lastAct && s.act) { navList.append(h('li', { class: 'act' }, s.act)); }
       lastAct = s.act;
-      const li = h('li', { draggable: true, 'data-id': s.id, title: 'Click to jump · drag to reorder', style: s.color ? { borderLeft: `4px solid ${s.color}` } : {},
-        onclick: () => { scrollToBlock(s.id); },
-        ondragstart: e => { dragId = s.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', s.id); },
-        ondragover: e => { e.preventDefault(); const r = li.getBoundingClientRect(); const top = e.clientY < r.top + r.height / 2; li.classList.toggle('over-top', top); li.classList.toggle('over-bot', !top); },
-        ondragleave: () => li.classList.remove('over-top', 'over-bot'),
-        ondrop: e => { e.preventDefault(); const r = li.getBoundingClientRect(); const after = e.clientY >= r.top + r.height / 2; li.classList.remove('over-top', 'over-bot'); moveScene(dragId, s.id, after); },
-      },
+      const li = h('li', { 'data-id': s.id, title: 'Click to jump · drag to reorder', style: s.color ? { borderLeft: `4px solid ${s.color}` } : {}, onclick: () => { scrollToBlock(s.id); } },
         h('span', { class: 'num' }, s.num),
         h('div', { style: { minWidth: 0, flex: 1 } }, h('div', { class: 'nh' }, s.label), s.synopsis ? h('div', { class: 'ns' }, s.synopsis) : null),
         h('span', { class: 'np' }, fmtEighths(s.eighths)));
-      navList.append(li);
+      navList.append(DnD.item(li, 'scene', s.id, (id, after) => moveScene(id, s.id, after), { edge: 'y' }));
     });
     const omitted = P.blocks.filter(b => b.type === 'scene' && b.om);
     if (omitted.length) { navList.append(h('li', { class: 'act' }, 'Omitted scenes')); omitted.forEach(b => navList.append(h('li', { style: { opacity: .7 } }, h('span', { class: 'num' }, b.num || '—'), h('div', { style: { flex: 1, minWidth: 0 } }, h('div', { class: 'nh', style: { textDecoration: 'line-through' } }, stripRich(b.text) || '(untitled)')), h('button', { class: 'btn sm', onclick: e => { e.stopPropagation(); flushPending(); delete b.om; commit(true); scheduleRefresh(true); } }, 'Restore')))); }
@@ -476,7 +476,7 @@ Views.script = function (root) {
     status.append(h('span', {}, `${pg.count} page${pg.count === 1 ? '' : 's'}`), h('span', {}, `${n} scene${n === 1 ? '' : 's'}`), h('span', {}, `${words.toLocaleString()} words`),
       h('span', {}, `~${estMin} min runtime`),
       rev ? h('span', { style: { color: 'var(--accent)', fontWeight: 600 } }, `Tracking: ${rev.name}`) : null, h('span', { class: 'grow' }),
-      h('span', {}, 'Tab: change element · Enter: next line · Ctrl+B/I/U: format'));
+      h('span', { class: 'hint' }, Device.touchOn() ? 'Enter: next line · the bar above the keyboard changes the element type' : 'Tab: change element · Enter: next line · Ctrl+B/I/U: format'));
     renderNav();
   }
 
@@ -562,12 +562,21 @@ Views.script = function (root) {
   }
   /* ----- table read: browser speech, a different voice / pitch per character ----- */
   let reading = false;
-  function stopRead() { reading = false; try { speechSynthesis.cancel(); } catch (e) { } readBtn.classList.remove('active'); $$('.blk.reading', paper).forEach(x => x.classList.remove('reading')); }
-  function toggleRead() {
+  function stopRead() { reading = false; Device.awake('read', false); try { speechSynthesis.cancel(); } catch (e) { } readBtn.classList.remove('active'); $$('.blk.reading', paper).forEach(x => x.classList.remove('reading')); }
+  /* Chrome (Android especially) loads its voices a moment after the first request */
+  async function loadVoices() {
+    let v = speechSynthesis.getVoices();
+    if (!v.length) { await new Promise(r => { speechSynthesis.addEventListener('voiceschanged', r, { once: true }); setTimeout(r, 1500); }); v = speechSynthesis.getVoices(); }
+    const lang = (navigator.language || 'en').slice(0, 2).toLowerCase(), mine = v.filter(x => x.lang.toLowerCase().startsWith(lang));
+    return mine.length ? mine : v.filter(x => /^en/i.test(x.lang));
+  }
+  async function toggleRead() {
     if (!('speechSynthesis' in window)) return toast('This browser has no speech engine for table reads.', true);
     if (reading) return stopRead();
-    let i = Math.max(0, idx(curBlock() || P.blocks[0])), speaker = null, nVoice = 0; const voices = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang)), assigned = new Map();
-    reading = true; readBtn.classList.add('active'); toast('Reading aloud from here — click the speaker button again to stop.');
+    reading = true; readBtn.classList.add('active');
+    let i = Math.max(0, idx(curBlock() || P.blocks[0])), speaker = null, nVoice = 0; const voices = await loadVoices(), assigned = new Map();
+    if (!reading) return;
+    Device.awake('read', true); toast('Reading aloud from here — click the speaker button again to stop.');
     let omitted = false;
     const next = () => {
       if (!reading || i >= P.blocks.length) return stopRead();
@@ -652,7 +661,6 @@ Views.script = function (root) {
   const onGlobal = e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !e.target.closest('.overlay')) { e.preventDefault(); openFind(); } };
   document.addEventListener('keydown', onGlobal);
   /* touch keyboards have no Tab or Ctrl: a bar above the keyboard changes the element type and formats */
-  let kbar = null, kbarT = 0;
   function kbarBuild() {
     const hold = fn => ({ onpointerdown: e => { e.preventDefault(); }, onclick: e => { e.preventDefault(); const b = curBlock(); if (b) fn(b); } });
     const B = (label, title, fn, cls = '') => h('button', Object.assign({ class: 'kb ' + cls, title, type: 'button' }, hold(fn)), label);
@@ -662,13 +670,20 @@ Views.script = function (root) {
       h('span', { class: 'kb-sep' }), B('B', 'Bold', b => fmt('**', b), 'b'), B('I', 'Italic', b => fmt('*', b), 'i'), B('U', 'Underline', b => fmt('_', b), 'u'), B('✎', 'Note on this line', b => editNote(b)),
       h('span', { class: 'kb-sep' }), B('↶', 'Undo', () => undo()), B('↷', 'Redo', () => redo()), B('⌄', 'Hide keyboard', () => { const a = document.activeElement; a && a.blur && a.blur(); }, 'done'));
     document.body.append(kbar);
-    const place = () => { if (!kbar) return; const vv = window.visualViewport; kbar.style.bottom = vv ? Math.max(0, window.innerHeight - vv.offsetTop - vv.height) + 'px' : '0'; };
-    if (window.visualViewport) { visualViewport.addEventListener('resize', place); visualViewport.addEventListener('scroll', place); } kbar._place = place;
+    /* shown only while the on-screen keyboard is up: with a keyboard cover attached there is no soft
+       keyboard, the viewport keeps its height, and Tab / Ctrl work as on a computer */
+    const place = () => {
+      if (!kbar) return; const vv = window.visualViewport, gap = vv ? Math.max(0, window.innerHeight - vv.offsetTop - vv.height) : 0;
+      kbar.style.bottom = gap + 'px';
+      kbar.classList.toggle('on', !!kbar._want && (!vv || gap > 120));
+    };
+    if (window.visualViewport) { visualViewport.addEventListener('resize', place); visualViewport.addEventListener('scroll', place); }
+    kbar._place = place; kbar._unbind = () => { if (window.visualViewport) { visualViewport.removeEventListener('resize', place); visualViewport.removeEventListener('scroll', place); } };
   }
   function kbarShow() {
-    if (!document.documentElement.dataset.touch) return; clearTimeout(kbarT); if (!kbar) kbarBuild(); kbar.classList.add('on'); kbar._place(); const b = curBlock(); if (b) $$('.kb.type', kbar).forEach((x, i) => x.classList.toggle('active', types[i] && types[i].k === b.type));
+    if (!document.documentElement.dataset.touch) return; clearTimeout(kbarT); if (!kbar) kbarBuild(); kbar._want = true; kbar._place(); const b = curBlock(); if (b) $$('.kb.type', kbar).forEach((x, i) => x.classList.toggle('active', types[i] && types[i].k === b.type));
   }
-  function kbarHideSoon() { clearTimeout(kbarT); kbarT = setTimeout(() => { if (kbar && !(document.activeElement && paper.contains(document.activeElement))) kbar.classList.remove('on'); }, 220); }
+  function kbarHideSoon() { clearTimeout(kbarT); kbarT = setTimeout(() => { if (kbar && !(document.activeElement && paper.contains(document.activeElement))) { kbar._want = false; kbar.classList.remove('on'); } }, 220); }
   /* changes from other people in a live session */
   if (window.Collab) Collab.scriptHook = { remote(t) {
     const a = document.activeElement, typing = a && paper.contains(a), keep = curId, sel = typing ? [a.selectionStart, a.selectionEnd] : null;
@@ -678,7 +693,7 @@ Views.script = function (root) {
     renderNav(); scheduleRefresh(true); fitZoom();
   } };
   return () => {
-    if (window.Collab) Collab.scriptHook = null; if (kbar) { kbar.remove(); kbar = null; }
+    if (window.Collab) Collab.scriptHook = null; if (reading) stopRead(); clearTimeout(kbarT); clearTimeout(rt); clearTimeout(pend); if (kbar) { kbar._unbind(); kbar.remove(); kbar = null; }
     flushPending(); Store.flush(); removeEventListener('resize', onResize); document.removeEventListener('keydown', onGlobal); sugEl.remove(); root.parentElement.classList.remove('noscroll');
     const o = orphanReport(P);
     if (o.total) toast(`${o.total} item${o.total > 1 ? 's' : ''} (shots, tags, frames…) belong to scenes you deleted. Review under Backup → Clean up unused data.`, true);

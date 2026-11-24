@@ -4,34 +4,43 @@
    locked scene numbers, shared scene helpers
    =================================================================== */
 
-/* ---------- undo / redo for everything except the script text ---------- */
+/* ---------- undo / redo for everything except the script text ----------
+   A step is the whole project minus what the script editor owns (it has its own undo),
+   so every section — budget, photo, podcast, pitch, storyboard sequences, and any added
+   later — is covered without keeping a list. Each section is stored with a signature;
+   a section that did not change shares its copy with the step before, so memory only
+   grows by what was edited. */
 const deepShare = v => Array.isArray(v) ? v.map(deepShare) : (v && typeof v === 'object') ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepShare(x)])) : v;
+const HIST_SKIP = new Set(['id', 'mode', 'title', 'created', 'updated', 'meta', 'settings', 'blocks', 'snapshots', 'revisions']);
 const Hist = {
   stack: [], i: -1, active: false, pid: null, t: null, onchange: null,
-  sig(s) { return JSON.stringify(s, (k, v) => (typeof v === 'string' && v.length > 400) ? v.length + ':' + v.slice(-24) : v); },
-  take(P) {
-    const sh = a => a.map(o => ({ ...o }));
-    return { tags: sh(P.tags), shots: sh(P.shots), boards: sh(P.boards), people: sh(P.people), locations: sh(P.locations), budget: sh(P.budget), cues: sh(P.cues),
-      days: JSON.stringify(P.days), stage: JSON.stringify(P.stage), sceneMeta: JSON.stringify(P.sceneMeta),
-      casting: deepShare(P.casting), props: deepShare(P.props), wardrobe: deepShare(P.wardrobe), lookbook: deepShare(P.lookbook), tasks: sh(P.tasks), takes: sh(P.takes || []), lined: sh(P.lined || []), photo: deepShare(P.photo), shotTags: sh(P.shotTags || []), seqs: sh(P.seqs || []), live: deepShare(P.live), fin: deepShare(P.fin), reports: deepShare(P.reports), pitch: deepShare(P.pitch) };
+  /* long strings (images as data URLs) are compared by length and tail, not in full */
+  sig(v) { return JSON.stringify(v, (k, x) => (typeof x === 'string' && x.length > 400) ? x.length + ':' + x.slice(-24) : x) || ''; },
+  take(P, prev) {
+    const step = { parts: {}, sigs: {}, changed: !prev };
+    for (const k of Object.keys(P)) {
+      if (HIST_SKIP.has(k)) continue;
+      const sig = Hist.sig(P[k]), same = prev && prev.sigs[k] === sig;
+      step.sigs[k] = sig; step.parts[k] = same ? prev.parts[k] : deepShare(P[k]);
+      if (!same) step.changed = true;
+    }
+    return step;
   },
-  reset(P) { clearTimeout(Hist.t); Hist.stack = [Hist.take(P)]; Hist.stack[0].sig = Hist.sig(Hist.stack[0]); Hist.i = 0; Hist.pid = P.id; Hist.fire(); },
+  reset(P) { clearTimeout(Hist.t); Hist.t = null; Hist.stack = [Hist.take(P)]; Hist.i = 0; Hist.pid = P.id; Hist.fire(); },
   note() { if (!Hist.active) return; clearTimeout(Hist.t); Hist.t = setTimeout(Hist.commit, 450); },
   commit() {
-    const P = Store.P; if (!P || !Hist.active || P.id !== Hist.pid) return;
-    const s = Hist.take(P); s.sig = Hist.sig(s); if (Hist.stack[Hist.i] && Hist.stack[Hist.i].sig === s.sig) return;
+    Hist.t = null; const P = Store.P; if (!P || !Hist.active || P.id !== Hist.pid) return;
+    const s = Hist.take(P, Hist.stack[Hist.i]); if (!s.changed) return;
     Hist.stack = Hist.stack.slice(0, Hist.i + 1); Hist.stack.push(s); if (Hist.stack.length > 40) Hist.stack.shift(); Hist.i = Hist.stack.length - 1; Hist.fire();
   },
-  flush() { if (Hist.t) { clearTimeout(Hist.t); Hist.t = null; Hist.commit(); } },
+  flush() { if (Hist.t) { clearTimeout(Hist.t); Hist.commit(); } },
   can(d) { return d < 0 ? Hist.i > 0 : Hist.i < Hist.stack.length - 1; },
   fire() { if (Hist.onchange) Hist.onchange(); },
   step(d) {
     if (window.Collab && Collab.active(Store.P)) { toast('Undo is off during a live session, so nobody undoes other people’s work. Use Drafts or budget Versions to go back.', true); return; }
     Hist.flush(); const P = Store.P; if (!P || !Hist.can(d)) return;
-    Hist.i += d; const s = Hist.stack[Hist.i], sh = a => a.map(o => ({ ...o }));
-    P.tags = sh(s.tags); P.shots = sh(s.shots); P.boards = sh(s.boards); P.people = sh(s.people); P.locations = sh(s.locations); P.budget = sh(s.budget); P.cues = sh(s.cues);
-    P.days = JSON.parse(s.days); P.stage = JSON.parse(s.stage); P.sceneMeta = JSON.parse(s.sceneMeta);
-    P.casting = deepShare(s.casting); P.props = deepShare(s.props); P.wardrobe = deepShare(s.wardrobe); P.lookbook = deepShare(s.lookbook); P.tasks = sh(s.tasks); P.takes = sh(s.takes || []); P.lined = sh(s.lined || []); P.photo = deepShare(s.photo); P.shotTags = sh(s.shotTags || []); P.seqs = sh(s.seqs || []); if (s.live) P.live = deepShare(s.live); if (s.fin) P.fin = deepShare(s.fin); P.reports = deepShare(s.reports); P.pitch = deepShare(s.pitch);
+    const from = Hist.stack[Hist.i]; Hist.i += d; const to = Hist.stack[Hist.i];
+    for (const k in to.parts) if (to.parts[k] !== from.parts[k]) P[k] = deepShare(to.parts[k]);   // only the sections that differ
     Store.touch(); Hist.fire(); Router.refresh(); toast(d < 0 ? 'Undone' : 'Redone');
   },
 };

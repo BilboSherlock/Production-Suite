@@ -9,7 +9,7 @@ const dayScenes = (P, d, scenes) => d.sceneIds.map(id => scenes.find(s => s.id =
 const addDays = (iso, n, skipWeekend) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); if (skipWeekend) while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); };
 
 Views.schedule = function (root) {
-  const P = Store.P; let scenes = getScenes(P), dragging = null;
+  const P = Store.P; let scenes = getScenes(P);
   if (!scenes.length) { root.append(h('div', { class: 'page' }, h('div', { class: 'empty' }, h('h3', {}, 'No scenes to schedule yet'), h('p', {}, 'Write some scenes in the Script view, then drag them onto shoot days here.'), h('a', { class: 'btn primary', href: `#/p/${P.id}/script` }, 'Go to Script')))); return; }
   root.parentElement.classList.add('noscroll');
   const pool = h('div', { class: 'sched-pool' }), daysEl = h('div', { class: 'sched-days' }), stats = h('span', { class: 'small muted' });
@@ -28,27 +28,18 @@ Views.schedule = function (root) {
 
   const scheduled = () => new Set(P.days.flatMap(d => d.sceneIds));
   function strip(s) {
-    const el = h('div', { class: 'strip ' + stripCls(s), draggable: true, title: 'Drag to a shoot day',
-      ondragstart: e => { dragging = s.id; e.dataTransfer.setData('text/plain', s.id); e.dataTransfer.effectAllowed = 'move'; setTimeout(() => el.classList.add('dragging'), 0); },
-      ondragend: () => { dragging = null; el.classList.remove('dragging'); clearInd(); $$('.zone.over').forEach(z => z.classList.remove('over')); } },
+    const el = h('div', { class: 'strip ' + stripCls(s), title: 'Drag to a shoot day' },
       h('span', { class: 'sn' }, s.num), h('span', { class: 'ie' }, `${s.ioe || '—'}·${(s.tod || '').slice(0, 5) || '—'}`),
       h('div', { class: 'st' }, h('b', {}, locName(P, s) || s.label), h('span', {}, s.synopsis || [...sceneCast(P, s)].slice(0, 5).join(', ') || s.heading)),
       h('span', { class: 'pg', title: 'Estimated shooting time' }, fmtEighths(s.eighths) + ' pg · ' + fmtMin(sceneEst(P, s))));
-    return el;
+    return DnD.source(el, 'strip', s.id);
   }
-  const clearInd = () => $$('.drop-ind').forEach(x => x.remove());
-  function dropIndex(el, y) { let i = 0; for (const s of $$('.strip:not(.dragging)', el)) { const r = s.getBoundingClientRect(); if (y < r.top + r.height / 2) break; i++; } return i; }
-  function zone(el, dayId) {
-    el.addEventListener('dragover', e => { if (!dragging) return; e.preventDefault(); el.classList.add('over'); clearInd(); const st = $$('.strip:not(.dragging)', el), i = dropIndex(el, e.clientY), ind = h('div', { class: 'drop-ind' }); i < st.length ? st[i].before(ind) : el.append(ind); });
-    el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) { el.classList.remove('over'); clearInd(); } });
-    el.addEventListener('drop', e => {
-      e.preventDefault(); el.classList.remove('over'); const i = dropIndex(el, e.clientY), id = dragging; clearInd(); if (!id) return;
-      P.days.forEach(d => d.sceneIds = d.sceneIds.filter(x => x !== id));
-      if (dayId) P.days.find(d => d.id === dayId).sceneIds.splice(i, 0, id);
-      Store.touch(); draw();
-    });
-    return el;
-  }
+  /* a shoot day (or the unscheduled pool, dayId = null): drop a strip at any position */
+  const zone = (el, dayId) => DnD.zone(el, 'strip', (id, i) => {
+    P.days.forEach(d => d.sceneIds = d.sceneIds.filter(x => x !== id));
+    if (dayId) P.days.find(d => d.id === dayId).sceneIds.splice(i, 0, id);
+    Store.touch(); draw();
+  }, { items: '.strip' });
   function dayCard(d, n) {
     const list = dayScenes(P, d, scenes), e8 = sum(list, s => s.eighths);
     const locs = [...new Set(list.map(s => locName(P, s)).filter(Boolean))];

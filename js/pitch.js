@@ -69,10 +69,26 @@ Views.pitch = function (root) {
   function present(start) {
     if (!D.slides.length) return toast('Add some slides first.', true);
     let i = Math.max(0, start); const ov = h('div', { class: 'present', style: { alignItems: 'center', justifyContent: 'center' }, tabindex: 0 }); const holder = h('div'); ov.append(holder);
-    function show() { holder.innerHTML = ''; const el = slideEl(P, D.slides[i], D.theme, i); el.style.zoom = Math.min(innerWidth / 1280, innerHeight / 720); holder.append(el); }
-    const key = e => { if (e.key === 'Escape') close(); else if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); i = Math.min(D.slides.length - 1, i + 1); show(); } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { i = Math.max(0, i - 1); show(); } };
-    const close = () => { document.removeEventListener('keydown', key); window.removeEventListener('resize', show); ov.remove(); };
-    ov.addEventListener('click', () => { i = Math.min(D.slides.length - 1, i + 1); show(); });
+    const count = h('span', { class: 'small', style: { minWidth: '60px', textAlign: 'center' } });
+    function show() { holder.innerHTML = ''; const el = slideEl(P, D.slides[i], D.theme, i); el.style.zoom = Math.min(innerWidth / 1280, innerHeight / 720); holder.append(el); count.textContent = `${i + 1} / ${D.slides.length}`; }
+    const go = d => { i = Math.max(0, Math.min(D.slides.length - 1, i + d)); show(); };
+    const key = e => { if (e.key === 'Escape') close(); else if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(1); } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') go(-1); };
+    const close = () => { document.removeEventListener('keydown', key); window.removeEventListener('resize', show); ov.remove(); if (document.fullscreenElement) document.exitFullscreen().catch(() => { }); };
+    ov._close = close;
+    /* touch & pen: swipe, or tap the left third to go back and anywhere else to go on; the bar leaves */
+    const stop = e => e.stopPropagation();
+    ov.append(h('div', { class: 'bar pres-bar', onpointerdown: stop, onpointerup: stop },
+      h('button', { class: 'btn', 'aria-label': 'Previous slide', onclick: () => go(-1) }, icon('left', 15)), count,
+      h('button', { class: 'btn', 'aria-label': 'Next slide', onclick: () => go(1) }, icon('right', 15)),
+      h('button', { class: 'btn', onclick: close }, icon('x', 15), 'Exit')));
+    ov.style.touchAction = 'none';
+    let down = null;
+    ov.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY }; });
+    ov.addEventListener('pointerup', e => {
+      if (!down) return; const dx = e.clientX - down.x, dy = e.clientY - down.y; down = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
+      else if (Math.hypot(dx, dy) < 12) go(e.clientX < innerWidth / 3 ? -1 : 1);
+    });
     document.addEventListener('keydown', key); window.addEventListener('resize', show); document.body.append(ov); show(); ov.focus();
   }
 

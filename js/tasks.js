@@ -8,7 +8,7 @@ const newTask = (title, status = 'todo') => ({ id: uid(), title, notes: '', stat
 const taskOverdue = t => t.status !== 'done' && t.due && t.due < new Date().toISOString().slice(0, 10);
 
 Views.tasks = function (root) {
-  const P = Store.P; let dragId = null; UI.taskMode = UI.taskMode || 'board';
+  const P = Store.P; UI.taskMode = UI.taskMode || 'board';
   const F = UI.taskFilter = UI.taskFilter || { dept: '', who: '', q: '' };
   const board = h('div', { class: 'kanban' }), summary = h('div', { class: 'row small muted' });
   const people = () => [...new Set(P.people.filter(p => p.name).map(p => p.name).concat(P.tasks.map(t => t.assignee).filter(Boolean)))].sort();
@@ -54,13 +54,11 @@ Views.tasks = function (root) {
     Store.touch(); draw();
   }
   function card(t) {
-    const el = h('div', { class: 'tcard p-' + t.priority.toLowerCase() + (t.status === 'done' ? ' done' : ''), draggable: true, onclick: () => editTask(t),
-      ondragstart: e => { dragId = t.id; e.dataTransfer.setData('text/plain', t.id); e.dataTransfer.effectAllowed = 'move'; setTimeout(() => el.classList.add('dragging'), 0); },
-      ondragend: () => { dragId = null; el.classList.remove('dragging'); $$('.kcol.over').forEach(c => c.classList.remove('over')); $$('.drop-ind').forEach(x => x.remove()); } },
+    const el = h('div', { class: 'tcard p-' + t.priority.toLowerCase() + (t.status === 'done' ? ' done' : ''), onclick: () => editTask(t) },
       h('div', { class: 'tt' }, t.title || '(untitled)'),
       h('div', { class: 'tm' }, t.dept ? h('span', { class: 'pill' }, t.dept) : null, t.assignee ? h('span', { class: 'small' }, icon('user', 12), ' ' + t.assignee) : null,
         t.sceneId && sceneNum(t.sceneId) ? h('span', { class: 'small muted' }, 'Sc ' + sceneNum(t.sceneId)) : null, t.due ? h('span', { class: 'small' + (taskOverdue(t) ? ' overdue' : ' muted') }, (taskOverdue(t) ? '⚠ ' : '') + fmtDateShort(t.due)) : null));
-    return el;
+    return DnD.source(el, 'task', t.id);
   }
   function drawBoard() {
     board.className = 'kanban'; board.innerHTML = '';
@@ -70,9 +68,8 @@ Views.tasks = function (root) {
       const col = h('div', { class: 'kcol', 'data-k': k });
       const add = h('input', { class: 'inp', placeholder: '+ Add a task, press Enter', onkeydown: e => { if (e.key === 'Enter' && add.value.trim()) { const t = newTask(add.value.trim(), k); if (F.dept) t.dept = F.dept; if (F.who) t.assignee = F.who; P.tasks.push(t); Store.touch(); draw(); setTimeout(() => $(`.kcol[data-k=${k}] input`, board)?.focus(), 20); } } });
       const body = h('div', { class: 'kbody' }, list.map(card));
-      col.addEventListener('dragover', e => { if (!dragId) return; e.preventDefault(); col.classList.add('over'); $$('.drop-ind', col).forEach(x => x.remove()); const cards = $$('.tcard:not(.dragging)', body); let i = 0; for (const c of cards) { const r = c.getBoundingClientRect(); if (e.clientY < r.top + r.height / 2) break; i++; } const ind = h('div', { class: 'drop-ind' }); i < cards.length ? cards[i].before(ind) : body.append(ind); });
-      col.addEventListener('dragleave', e => { if (!col.contains(e.relatedTarget)) { col.classList.remove('over'); $$('.drop-ind', col).forEach(x => x.remove()); } });
-      col.addEventListener('drop', e => { e.preventDefault(); const cards = $$('.tcard:not(.dragging)', body); let i = 0; for (const c of cards) { const r = c.getBoundingClientRect(); if (e.clientY < r.top + r.height / 2) break; i++; } const ids = list.filter(t => t.id !== dragId).map(t => t.id); moveTask(dragId, k, ids[i] || null); });
+      /* drop anywhere in a column; the line shows where the card will land */
+      DnD.zone(col, 'task', (id, at) => { const ids = list.filter(t => t.id !== id).map(t => t.id); moveTask(id, k, ids[at] || null); }, { items: '.tcard' });
       col.append(h('div', { class: 'khead' }, h('b', {}, l), h('span', { class: 'pill' }, list.length)), add, body);
       board.append(col);
     });
