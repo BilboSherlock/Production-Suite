@@ -12,9 +12,10 @@ Views.breakdown = function (root) {
   const vm = new BreakdownVM(), P = Store.P;
   if (!vm.scenes.length) { root.append(h('div', { class: 'page' }, h('div', { class: 'empty' }, h('h3', {}, 'No scenes yet'), h('p', {}, 'Write some scenes in the Script view first — the breakdown is built from your scene headings.'), h('a', { class: 'btn primary', href: `#/p/${P.id}/script` }, 'Go to Script')))); return; }
   root.parentElement.classList.add('noscroll');
-  const top = h('div', { class: 'toolbar' }), left = h('div', { class: 'bd-scenes' }), center = h('div', { class: 'bd-center' }), right = h('div', { class: 'bd-right' });
+  const top = h('div', { class: 'toolbar' }), left = h('div', { class: 'bd-scenes' }), center = h('div', { class: 'bd-center' }), right = h('div', { class: 'bd-right', 'data-fit-accordion': '' });
   root.append(h('div', { class: 'script-wrap' }, top, h('div', { class: 'bd' }, left, center, right)));
-  let palette = null;
+  let palette = null, noteTab = 'synopsis';
+  const NOTE_TABS = [['synopsis', 'Synopsis', 'Scene synopsis — shows in the corkboard, stripboard and call sheets'], ['notes', 'Notes', 'Production notes for this scene'], ['continuity', 'Continuity', 'Injuries, weather, time of day, state of the set…']];
   const closePalette = () => { palette && palette.remove(); palette = null; };
   const openItem = x => { vm.openItem(x); goto('props'); };
 
@@ -69,12 +70,13 @@ Views.breakdown = function (root) {
             h('span', { style: { cursor: 'pointer' }, onclick: () => { if (p) { vm.openPerson(p); goto('people'); } else toast('Add this character in Cast & Crew to give them a profile.'); } }, name, p && p.name ? h('i', {}, ' · ' + p.name) : null),
             tag ? h('button', { title: 'Remove from this scene', onclick: () => vm.untag(tag) }, icon('x', 11)) : null)),
           h('span', { 'data-key': 'add', style: { display: 'contents' } }, addCast)))),
-      h('div', { class: 'row', style: { gap: '14px', alignItems: 'flex-start', marginTop: '12px', flexWrap: 'wrap' } },
-        h('div', { class: 'grow', style: { minWidth: '220px' } }, h('label', { class: 'lbl' }, 'Synopsis'), area('synopsis', 'Scene synopsis — shows in the corkboard, stripboard and call sheets')),
-        h('div', { class: 'grow', style: { minWidth: '220px' } }, h('label', { class: 'lbl' }, 'Notes'), area('notes', 'Production notes for this scene')),
-        h('div', { style: { width: '150px' } }, h('label', { class: 'lbl' }, 'Story day'), h('input', { class: 'inp', placeholder: 'e.g. Day 3', value: meta.storyDay || '', oninput: e => vm.setMeta('storyDay', e.target.value, { quiet: true }) })),
-        h('div', { style: { width: '150px' } }, h('label', { class: 'lbl' }, 'Shoot time (min)'), h('input', { class: 'inp', type: 'number', min: 5, placeholder: '~' + vm.estGuess, title: 'Your estimate for shooting this scene; leave blank to estimate from page length', value: meta.est || '', oninput: e => vm.setMeta('est', e.target.value, { quiet: true }) })),
-        h('div', { class: 'grow', style: { minWidth: '220px' } }, h('label', { class: 'lbl' }, 'Continuity notes'), area('continuity', 'Injuries, weather, time of day, state of the set…'))));
+      /* the scene's writing fields share one box: a tab each, a dot on the ones with something in */
+      h('div', { class: 'bd-notes' },
+        h('div', { class: 'bd-ntabs', role: 'tablist' }, NOTE_TABS.map(([k, label]) => h('button', { type: 'button', role: 'tab', 'aria-selected': noteTab === k ? 'true' : 'false', class: noteTab === k ? 'on' : '', onclick: () => { noteTab = k; drawScene(); } }, label, (meta[k] || '').trim() ? h('i', { class: 'bd-ndot' }) : null)),
+          h('span', { class: 'grow' }),
+          h('label', { class: 'bd-mini' }, 'Story day', h('input', { class: 'inp', placeholder: 'Day 3', value: meta.storyDay || '', oninput: e => vm.setMeta('storyDay', e.target.value, { quiet: true }) })),
+          h('label', { class: 'bd-mini' }, 'Shoot min', h('input', { class: 'inp', type: 'number', min: 5, placeholder: '~' + vm.estGuess, title: 'Your estimate for shooting this scene; leave blank to estimate from page length', value: meta.est || '', oninput: e => vm.setMeta('est', e.target.value, { quiet: true }) }))),
+        h('div', { 'data-key': 'note:' + noteTab }, area(noteTab, NOTE_TABS.find(t => t[0] === noteTab)[2]))));
   }
   /* selecting words in the script opens the tag palette */
   function onSelect(e) {
@@ -152,7 +154,7 @@ Views.breakdown = function (root) {
       const dlId = 'dl-el-' + c.k;
       const inp = h('input', { class: 'inp', 'data-key': 'add', list: kind ? dlId : null, placeholder: kind ? `Add ${c.label.toLowerCase()} — pick an existing one or type…` : `Add ${c.label.toLowerCase()}…`,
         onkeydown: e => { const v = e.target.value.trim(); if (e.key !== 'Enter' || !v) return; e.target.value = ''; const ex = kind && (P[kind] || []).find(x => x.name === v); tagged(vm.tag(c.k, v, ex || null), v); } });
-      return h('details', { class: 'cat', 'data-key': c.k, 'data-cat': c.k, open, style: { '--c': c.color }, ontoggle: e => vm.setOpen(c.k, e.target.open) },
+      return h('details', { class: 'cat' + (groups.length ? '' : ' none'), 'data-key': c.k, 'data-cat': c.k, open, style: { '--c': c.color }, ontoggle: e => vm.setOpen(c.k, e.target.open) },
         h('summary', {}, h('i', { class: 'dot' }), h('span', { class: 'grow' }, c.label), h('span', { class: 'pill' }, groups.length)),
         h('div', { class: 'cb' }, groups.map(g => elementRow(g, c, kind)), grid ? wearGrid(grid) : null, inp, kind ? h('datalist', { id: dlId, 'data-key': 'dl' }, addable.map(x => h('option', { value: x.name }))) : null));
     })]);

@@ -71,7 +71,7 @@ Views.setups = function (root) {
    --------------------------------------------------------------- */
 Views.brief = function (root) {
   /* Shoot brief — VIEW. Rules: js/models/brief.model.js; commands: js/viewmodels/brief.vm.js */
-  const vm = new BriefVM(), wrap = h('div', { class: 'page', style: { maxWidth: '1000px' } }); root.append(wrap);
+  const vm = new BriefVM(), wrap = h('div', { class: 'page brief-page', style: { maxWidth: '1000px' } }); root.append(wrap);
   const row = (...c) => h('div', { class: 'row', style: { gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '12px' } }, c.map(x => h('div', { style: { flex: '1 1 220px' } }, x)));
   const tin = (k, o = {}) => h(o.area ? 'textarea' : 'input', { class: 'inp', 'data-key': k, rows: o.rows || 3, placeholder: o.ph || '', value: vm.B[k] || '', oninput: e => vm.set(k, e.target.value) });
   const card = (key, ...kids) => h('div', { class: 'card', 'data-key': key, style: { padding: '18px', marginBottom: key === 'approvers' ? '' : '16px' } }, kids);

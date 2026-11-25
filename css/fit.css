@@ -1,0 +1,379 @@
+/* =====================================================================
+   COMPACT LAYER — everything on one screen, no scrollbars.
+   Loaded after app.css and overrides it. js/fit.js does the parts CSS
+   can't (table columns and pages, scroll hints, the rail's density).
+   ===================================================================== */
+:root {
+  /* the status bar on top and the gesture handle at the bottom (installed app, edge to edge) */
+  --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+  --pad: 16px; --gap: 12px;
+  --nav-h: 34px; --rail-w: 208px;
+  --fade: 26px;
+}
+html[data-touch] { --nav-h: 42px; --pad: 14px; }
+
+/* ---------- the shell fills the screen exactly, between the system bars ---------- */
+html, body { height: 100%; overflow: hidden; }
+body { font-size: 14.5px; line-height: 1.45; }
+html[data-touch] body { font-size: 15px; }
+#app { position: fixed; inset: 0; height: auto; background: var(--surface);
+  padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l); }
+#content { min-height: 0; }
+#main { background: var(--bg); overscroll-behavior: contain; }
+
+/* ---------- no scrollbars anywhere: panels that still hold more scroll by touch / wheel and fade at the edge ---------- */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }
+[data-sh] { --ft: #000; --fb: #000; }
+[data-sh*="t"] { --ft: transparent; } [data-sh*="b"] { --fb: transparent; }
+[data-sh*="t"], [data-sh*="b"] { -webkit-mask-image: linear-gradient(to bottom, var(--ft), #000 var(--fade), #000 calc(100% - var(--fade)), var(--fb)); mask-image: linear-gradient(to bottom, var(--ft), #000 var(--fade), #000 calc(100% - var(--fade)), var(--fb)); }
+[data-sh*="l"]:not([data-sh*="t"]):not([data-sh*="b"]), [data-sh*="r"]:not([data-sh*="t"]):not([data-sh*="b"]) { -webkit-mask-image: linear-gradient(to right, var(--fl, #000), #000 var(--fade), #000 calc(100% - var(--fade)), var(--fr, #000)); mask-image: linear-gradient(to right, var(--fl, #000), #000 var(--fade), #000 calc(100% - var(--fade)), var(--fr, #000)); }
+[data-sh*="l"] { --fl: transparent; } [data-sh*="r"] { --fr: transparent; }
+
+/* ---------- rail: fits the height, folds tighter when it has to ---------- */
+#rail { width: var(--rail-w); padding: 10px 8px 8px; gap: 1px; }
+#rail .logo { padding: 4px 8px 10px; font-size: 15px; }
+#rail .logo .mark { width: 26px; height: 26px; }
+#rail .nav-a { min-height: var(--nav-h); padding: 0 10px; gap: 10px; font-size: 14px; flex: none; }
+#rail .nav-label { padding: 9px 10px 3px; font-size: 10px; flex: none; }
+#rail .nav-sep { margin: 5px 6px; }
+#rail.dense { --nav-h: 30px; padding-top: 6px; }
+#rail.dense .nav-label { padding: 5px 10px 1px; font-size: 9.5px; }
+#rail.dense .logo { padding-bottom: 6px; }
+#rail.denser .nav-label { font-size: 0; height: 1px; padding: 0; margin: 4px 8px; background: var(--border); }
+html[data-touch] #rail.dense { --nav-h: 36px; }
+html[data-touch] #rail.denser { --nav-h: 33px; }
+html[data-touch] #rail .nav-a { min-height: var(--nav-h); }
+@media (max-width: 1240px) { #rail { width: 60px; } #rail .nav-a { padding: 0; justify-content: center; } #rail .logo { justify-content: center; padding-left: 0; padding-right: 0; } #rail .nav-label { font-size: 0; height: 1px; padding: 0; margin: 5px 8px; background: var(--border); } }
+@media (max-width: 1500px) { html[data-touch]:not([data-rail="wide"]) #rail { width: 60px; } html[data-touch]:not([data-rail="wide"]) #rail .nav-a { padding: 0; justify-content: center; } html[data-touch]:not([data-rail="wide"]) #rail .nav-label { font-size: 0; height: 1px; padding: 0; margin: 5px 8px; background: var(--border); } }
+.nav-a .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- top bar and section tabs ---------- */
+#topbar { height: 48px; padding: 0 12px; gap: 6px; }
+html[data-touch] #topbar { height: 52px; }
+#topbar .ptitle { font-size: 15.5px; padding: 4px 8px; }
+.hub-tabs { flex: none; }
+
+/* ---------- pages: tighter rhythm, same hierarchy ---------- */
+.page { padding: 14px var(--pad) 18px; max-width: 1480px; }
+.page-h { margin-bottom: 12px; gap: 10px; }
+.page-h h2 { font-size: 20px; }
+.toolbar { padding: 6px 12px; gap: 6px; }
+.tabs { margin-bottom: 10px; }
+.tabs button { padding: 7px 12px; }
+html[data-touch] .tabs button { padding: 8px 14px; min-height: 42px; }
+.sum { gap: 8px; margin-bottom: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.sum > div { padding: 9px 12px; }
+.sum b { font-size: 19px; }
+.grid-cards { gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.empty { padding: 32px 16px; }
+.btn { padding: 6px 12px; }
+.btn.sm { padding: 3px 9px; }
+html[data-touch] .btn { min-height: 40px; padding-top: 7px; padding-bottom: 7px; }
+html[data-touch] .btn.sm { min-height: 36px; padding: 5px 12px; }
+html[data-touch] .icon-btn { min-width: 40px; min-height: 40px; }
+html[data-touch] select, html[data-touch] input.inp, html[data-touch] .inp { min-height: 40px; }
+html[data-touch] input, html[data-touch] textarea, html[data-touch] select, html[data-touch] [contenteditable] { font-size: 15px; }
+.field { margin-bottom: 10px; }
+
+/* ---------- dialogs, menus and messages stay clear of the system bars ---------- */
+.overlay { padding: calc(12px + var(--safe-t)) calc(12px + var(--safe-r)) calc(12px + var(--safe-b)) calc(12px + var(--safe-l)); }
+.modal { max-height: 100%; }
+.modal-h { padding: 12px 16px; } .modal-b { padding: 14px 16px; } .modal-f { padding: 10px 16px; }
+.menu { max-height: calc(100dvh - var(--safe-t) - var(--safe-b) - 16px); }
+#toasts { bottom: calc(18px + var(--safe-b)); }
+.present { padding-top: var(--safe-t); padding-bottom: var(--safe-b); }
+.kbar { padding-bottom: calc(6px + var(--safe-b)); }
+
+/* =====================================================================
+   SMART TABLES (js/fit.js) — columns from content, the rest folds into
+   the row, rows paged to the room there is.
+   ===================================================================== */
+table.tbl.fit { display: grid; grid-template-columns: var(--fit-cols); width: 100%; min-width: 0 !important; max-width: 100%; }
+table.tbl.fit > thead, table.tbl.fit > tbody, table.tbl.fit > tfoot { display: contents; }
+table.tbl.fit tr { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+table.tbl.fit th, table.tbl.fit td { min-width: 0 !important; width: auto !important; max-width: none !important; overflow-wrap: anywhere; }
+table.tbl.fit th { white-space: normal; display: flex; align-items: flex-end; overflow-wrap: normal; word-break: normal; hyphens: auto; }
+table.tbl.fit .cell, table.tbl.fit .inp { min-width: 0; }
+table.tbl.fit td > input.cell, table.tbl.fit td > select.cell, table.tbl.fit td > select.inp { text-overflow: ellipsis; }
+table.tbl.fit .fit-h, table.tbl.fit tr.fit-off, table.tbl.fit tr.fit-gc { display: none; }
+table.tbl.fit td.fit-sp { min-width: 0; }
+/* the chevron column, always first line, last column */
+table.tbl.fit .fit-xc, table.tbl.fit .fit-xh { grid-column: -2; grid-row: 1; padding: 2px; display: flex; align-items: flex-start; justify-content: center; }
+.fit-x { width: 30px; height: 30px; border: 0; border-radius: 3px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.fit-x::before { content: ''; width: 8px; height: 8px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-2px) rotate(45deg); transition: transform .15s; }
+.fit-x[aria-expanded="true"]::before { transform: translateY(2px) rotate(-135deg); }
+.fit-x:hover { background: var(--surface2); color: var(--text); }
+.fit-x[hidden] { display: none; }
+html[data-touch] .fit-x { width: 40px; height: 40px; }
+/* an open row: its folded columns underneath, labelled */
+table.tbl.fit tr.fit-open > :not(.fit-h) { grid-row: 1; }
+table.tbl.fit tr.fit-open > td { background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+table.tbl.fit tr.fit-open > .fit-h { display: flex; align-items: center; gap: 12px; grid-column: 1 / -1; padding: 3px 8px 3px 14px; border-bottom: 0; }
+table.tbl.fit tr.fit-open > .fit-h::before { content: attr(data-fl); flex: 0 0 132px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+table.tbl.fit tr.fit-open > .fit-h > * { flex: 1; min-width: 0; }
+table.tbl.fit tr.fit-open > .fit-h:last-of-type { padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+table.tbl.fit tr.fit-open > td:not(.fit-h) { border-bottom-color: transparent; }
+/* group rows fold */
+table.tbl.fit tr.grp > td { display: flex; align-items: center; gap: 6px; }
+.fit-g { flex: none; width: 22px; height: 22px; border: 0; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; padding: 0; border-radius: 2px; margin-left: -4px; }
+.fit-g::before { content: ''; width: 6px; height: 6px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .15s; margin-top: -3px; }
+.fit-g[aria-expanded="false"]::before { transform: rotate(-45deg); margin-top: 0; margin-left: -2px; }
+.fit-g:hover { color: var(--text); background: var(--surface3); }
+html[data-touch] .fit-g { width: 32px; height: 32px; }
+table.tbl.fit tr.grp.fit-shut > td { opacity: .8; }
+/* the pager */
+table.tbl.fit > tfoot.fit-foot tr { display: block; grid-column: 1 / -1; }
+table.tbl.fit > tfoot.fit-foot td { display: block; padding: 0; border-top: 1px solid var(--border); background: var(--surface2); position: static; }
+table.tbl.fit tr.fit-pg:hover td { background: var(--surface2); }
+.fit-pager { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 13px; color: var(--muted); min-height: 38px; }
+.fit-pager b { color: var(--text); font-weight: 650; }
+.fit-pb { width: 30px; height: 28px; border: 1px solid var(--border); background: var(--surface); border-radius: 3px; cursor: pointer; font-size: 17px; line-height: 1; color: var(--text); padding: 0; }
+.fit-pb:disabled { opacity: .35; cursor: default; }
+.fit-pb:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+.fit-pi { white-space: nowrap; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.fit-dots { display: inline-flex; gap: 5px; margin-left: 6px; }
+.fit-dot { width: 8px; height: 8px; border-radius: 50%; border: 0; padding: 0; background: var(--surface3); cursor: pointer; }
+.fit-dot.on { background: var(--accent); }
+.fit-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.fit-grow { flex: 1; }
+.fit-pt { border: 0; background: transparent; color: var(--accent); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 5px 8px; border-radius: 3px; }
+.fit-pt:hover { background: var(--accent-soft); }
+html[data-touch] .fit-pager { min-height: 48px; gap: 8px; }
+html[data-touch] .fit-pb { width: 42px; height: 38px; }
+html[data-touch] .fit-dot { width: 11px; height: 11px; }
+html[data-touch] .fit-dots { gap: 9px; }
+html[data-touch] .fit-pt { padding: 9px 12px; font-size: 13.5px; }
+/* measuring (fit.js, for a moment): the table as the browser would lay it out at its widest */
+table.tbl.fit-measure { display: table !important; width: max-content !important; min-width: 0 !important; max-width: none !important; table-layout: auto !important; position: absolute !important; visibility: hidden; left: 0; top: 0; }
+table.tbl.fit-measure > thead { display: table-header-group !important; } table.tbl.fit-measure > tbody { display: table-row-group !important; } table.tbl.fit-measure > tfoot { display: none !important; }
+table.tbl.fit-measure tr { display: table-row !important; }
+table.tbl.fit-measure tr.fit-off, table.tbl.fit-measure tr.fit-gc { display: table-row !important; }
+table.tbl.fit-measure th, table.tbl.fit-measure td { display: table-cell !important; white-space: nowrap; width: auto !important; min-width: 0 !important; }
+table.tbl.fit-measure .fit-xc, table.tbl.fit-measure .fit-xh, table.tbl.fit-measure .fit-g { display: none !important; }
+table.tbl.fit-measure input:not([type=checkbox]):not([type=radio]), table.tbl.fit-measure select, table.tbl.fit-measure textarea { field-sizing: content; width: auto !important; min-width: 4ch !important; max-width: 360px; }
+table.tbl.fit-measure textarea { white-space: pre; }
+table.tbl.fit-measure input[list] { padding-right: 26px !important; }
+table.tbl.fit td > * { max-width: 100%; }
+table.tbl.fit td > textarea, table.tbl.fit td > input:not([type=checkbox]):not([type=radio]), table.tbl.fit td > select { width: 100% !important; min-width: 0 !important; }
+table.tbl.fit-measure .thumb { width: 64px; }
+
+/* table rhythm: readable, compact */
+table.tbl { font-size: 14px; }
+.tbl th { padding: 7px 8px; font-size: 10.5px; line-height: 1.25; }
+.tbl td { padding: 3px 5px; }
+.tbl tr.grp td { padding: 6px 10px; }
+.cell { padding: 4px 6px; }
+html[data-touch] .tbl td { padding-top: 3px; padding-bottom: 3px; }
+html[data-touch] .tbl th { padding-top: 8px; padding-bottom: 8px; }
+html[data-touch] .cell { min-height: 38px; }
+table.tbl.rep td, table.tbl.rep th { padding: 7px 10px; }
+table.tbl.rep { font-size: 14px; line-height: 1.45; }
+
+/* ---------- paged lists and card grids (js/fit.js) ---------- */
+.fit-off { display: none !important; }
+.fit-lp { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; padding: 5px 6px; font-size: 13px; color: var(--muted); min-height: 38px; border-top: 1px solid var(--border); margin-top: auto; flex: none; }
+.fit-lp[hidden] { display: none; }
+.fit-lp b { color: var(--text); font-weight: 650; }
+html[data-touch] .fit-lp { min-height: 48px; gap: 8px; }
+.navlist .fit-lp, .kbody .fit-lp { position: sticky; bottom: 0; background: inherit; }
+.navlist { display: flex; flex-direction: column; }
+
+/* ---------- breakdown: three panes that each fit ---------- */
+.bd-scenes { width: 232px; padding: 6px; display: flex; flex-direction: column; overflow: hidden; }
+.bd-scenes .navlist { flex: 1; min-height: 0; overflow: auto; }
+.bd-right { width: 310px; padding: 10px; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; }
+.bd-right > * { flex: 1 1 100%; }
+.bd-right > details.cat { margin: 0; }
+.bd-right > details.cat.none:not([open]) { flex: 0 0 auto; border-style: dashed; background: transparent; }
+.bd-right > details.cat.none:not([open]) summary { padding: 4px 9px; font-size: 12.5px; font-weight: 600; color: var(--muted); gap: 6px; }
+.bd-right > details.cat.none:not([open]) summary .pill { display: none; }
+.bd-right > details.cat.none:not([open]) summary .grow { flex: none; }
+.bd-right > details.cat.none:not([open]) summary::after { content: '+'; font-weight: 700; }
+.bd-center { padding: 12px; display: flex; flex-direction: column; overflow: hidden; gap: 10px; }
+.bd-center > .strip-card { margin: 0; padding: 12px 14px; flex: none; }
+.bd-center > .strip-card h2 { font-size: 17px; margin-bottom: 8px; }
+.bd-center > .mini { flex: 1 1 auto; min-height: 120px; overflow: auto; padding: 18px 22px 22px 26px; }
+.bd-center > .page { overflow: auto; flex: 1; }
+.strip-grid { grid-template-columns: minmax(160px, 1fr) minmax(200px, 2fr); gap: 10px; }
+.bd-notes { margin-top: 8px; }
+.bd-ntabs { display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.bd-ntabs button[role=tab] { border: 0; background: transparent; padding: 6px 10px; font-weight: 650; font-size: 12.5px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.bd-ntabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.bd-ndot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .7; }
+.bd-mini { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-left: 8px; padding-bottom: 4px; }
+.bd-mini .inp { width: 84px; padding: 3px 7px; font-size: 13px; text-transform: none; letter-spacing: 0; }
+html[data-touch] .bd-mini .inp { min-height: 34px; }
+html[data-touch] .bd-ntabs button[role=tab] { padding: 9px 12px; }
+.bd-notes textarea.inp { min-height: 54px; max-height: 120px; }
+@media (max-width: 1240px) { .bd-scenes { width: 210px; } .bd-right { width: 290px; } }
+/* scene navigators: two lines at most per scene */
+.navlist li { padding: 6px 8px; gap: 8px; }
+.navlist .nh { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; }
+.bd-scenes .navlist .ns { display: none; }
+.bd-right .icon-btn { min-width: 30px !important; min-height: 30px !important; }
+.bd-right .el-row { align-items: center; padding: 5px 0; }
+
+/* ---------- schedule ---------- */
+/* the strip's text block shares its class name with the status pill; keep it plain */
+.strip .st { display: block; padding: 0; border-radius: 0; background: none; color: inherit; font-size: inherit; font-weight: inherit; letter-spacing: 0; text-transform: none; }
+.sched-days { padding: 12px 14px; display: flex; flex-direction: column; }
+.sched-days > .daycard { margin-bottom: 10px; flex: none; }
+.dayh { padding: 7px 12px; gap: 8px; }
+.strip { padding: 5px 9px; margin-bottom: 4px; }
+html[data-touch] .strip { padding: 7px 10px; }
+.sched-pool { width: 300px; }
+.zone { padding: 5px; }
+
+/* ---------- toolbars that would wrap: labels fold into icons (titles keep the names) ---------- */
+.tb-tight > .btn:has(.ico), .tb-tight > a.btn:has(.ico) { font-size: 0; gap: 0; padding-left: 9px; padding-right: 9px; }
+.tb-tight > .btn:has(.ico) .pill { font-size: 11px; margin-left: 4px; }
+.tb-tight > .tb-hint { display: none; }
+.tb-tighter > .seg > button { padding-left: 9px; padding-right: 9px; }
+.tb-tighter .typesel { min-width: 0; }
+.fit-lp { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
+.fit-lp .fit-dots { min-width: 0; overflow: hidden; flex-shrink: 1; }
+.navp .fit-lp .fit-dots { display: none; }
+
+/* ---------- overview: every number in one row, the rest in view ---------- */
+.tiles { grid-template-columns: repeat(auto-fit, minmax(124px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.tile { padding: 9px 11px; gap: 1px; min-width: 0; }
+.tile .tl { font-size: 10px; }
+.tile b { font-size: 21px; }
+.tile .ts { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.ov-cols { gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.ov-card { padding: 12px 14px; } .ov-card h3 { font-size: 11.5px; margin-bottom: 8px; }
+.attn li a { padding: 6px 0; font-size: 13.5px; }
+.jump { gap: 6px; }
+.jump .btn { padding: 4px 10px; }
+html[data-touch] .jump .btn { min-height: 36px; padding: 5px 11px; }
+.page > h3[data-key=every] { margin: 16px 0 8px !important; font-size: 14px; }
+
+/* ---------- props & people cards: smaller pictures until there is a photo ---------- */
+.people-grid, .prop-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.propcard .pic, .pcardp .pic { aspect-ratio: 16 / 9; font-size: 30px; }
+.propcard .pic[style*="url"], .pcardp .pic[style*="url"] { aspect-ratio: 4 / 3; }
+.pcardp .pbody, .propcard .pbody { padding: 8px 10px 10px; }
+
+/* ---------- budget dashboard: three columns side by side ---------- */
+.fin-kpis { gap: 8px; margin: 4px 0 10px; }
+.fin-kpi { padding: 9px 12px; }
+.fin-kpi b { font-size: 18px; }
+.fin-bar { padding: 4px; gap: 10px; grid-template-columns: 150px 1fr 100px; }
+@media (min-width: 1100px) {
+  .fin-cols { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(240px, .8fr); gap: 10px; align-items: start; }
+  .fin-cols > div:not(.card) { display: contents; }
+  .fin-cols .card { margin: 0 !important; }
+}
+.fin-cols .card { padding: 12px 14px !important; }
+.rep-wrap:has(> table.fit), .fin-wrap:has(> table.fit) { overflow: visible; }
+/* away from the dashboard the budget numbers shrink to one slim ribbon, leaving the screen to the sheet */
+.page:has(.fin-tabs button.on:not(:first-child)) .fin-kpis { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 6px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; margin: 2px 0 8px; }
+.page:has(.fin-tabs button.on:not(:first-child)) .fin-kpi { flex-direction: row; align-items: baseline; gap: 7px; padding: 0; border: 0; background: none; }
+.page:has(.fin-tabs button.on:not(:first-child)) .fin-kpi b { font-size: 15px; }
+.page:has(.fin-tabs button.on:not(:first-child)) .fin-kpi .fk-s, .page:has(.fin-tabs button.on:not(:first-child)) .fin-kpi .progress { display: none; }
+
+/* ---------- sectioned documents (call sheet): bands fold ---------- */
+.fit-sec { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; }
+.fit-sec::before { content: ''; width: 6px; height: 6px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); margin: -3px 2px 0 0; transition: transform .15s; flex: none; }
+.fit-sec.shut::before { transform: rotate(-45deg); margin-top: 0; }
+.fit-sec.shut::after { content: attr(data-n) ' · tap to open'; margin-left: auto; font-weight: 500; letter-spacing: .02em; text-transform: none; opacity: .7; }
+.fit-sec.shut[data-n=""]::after { content: 'tap to open'; }
+.fit-sec:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cs { padding: 22px 26px; }
+html[data-touch] .cs h4.fit-sec { padding-top: 8px; padding-bottom: 8px; }
+.cs h4.fit-sec { margin-top: 10px; }
+.cs .cs-top { padding-bottom: 8px; margin-bottom: 10px; }
+.cs .grid4 > div { padding: 4px 8px; }
+
+/* ---------- live desk: panels folded to fit (fit.js) ---------- */
+.ld-panel.fit-folded > .ld-pb, .ld-panel.fit-folded .ld-tools { display: none; }
+.ld-panel.fit-folded .ld-pt .ld-chev { transform: rotate(-90deg); }
+
+/* ---------- folded cards (fit.js) ---------- */
+.fit-shut > :not(:first-child) { display: none !important; }
+.fit-shut { padding-bottom: 0 !important; }
+.fit-shut > :first-child { cursor: pointer; position: relative; padding-bottom: 8px; margin-bottom: 0 !important; }
+.fit-shut > :first-child::after { content: 'Open'; position: absolute; right: 0; bottom: -2px; font-size: 11px; font-weight: 600; color: var(--accent); opacity: .8; display: none; }
+.fit-shut:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.setup-list { display: flex; flex-direction: column; gap: 8px; }
+.setup-list > .setup-card { margin: 0 !important; }
+
+/* ---------- shoot brief: two columns of cards ---------- */
+@media (min-width: 1000px) {
+  .page.brief-page { max-width: 1440px !important; columns: 2 440px; column-gap: 12px; }
+  .brief-page > .page-h { column-span: all; }
+  .brief-page > .card { break-inside: avoid; margin: 0 0 12px !important; padding: 14px !important; display: block; }
+}
+/* headings that fold a block (gear by category…) */
+h3.fit-sec, h4.fit-sec { padding: 4px 0; }
+h3.fit-sec.shut::after, h4.fit-sec.shut::after { color: var(--muted); font-size: 12px; }
+
+/* ---------- photo shot list: three cards a row on a landscape tablet ---------- */
+@media (min-width: 1100px) {
+  .ps-grid { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
+  .ps-card { gap: 10px; padding: 8px; }
+  .ps-ref { width: 76px; height: 96px; }
+  .ps-fields { row-gap: 4px; margin-top: 4px; }
+  .ps-main > :nth-child(2), .ps-main > :nth-child(4) { margin-top: 4px !important; }
+  .ps-status { width: 104px; }
+  /* the tag bar and the filters share one line */
+  .page:has(> .ps-stats) { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 16px; align-content: start; }
+  .page:has(> .ps-stats) > * { grid-column: 1 / -1; min-width: 0; }
+  .page:has(> .ps-stats) > .ps-stats + div { grid-column: 1; align-self: center; margin: 0 !important; }
+  .page:has(> .ps-stats) > .ps-stats + div + .row { grid-column: 2; margin: 0 !important; }
+  .ps-group > .row:first-child { margin: 10px 0 6px !important; }
+}
+
+/* ---------- live desk columns: folded panels pair up as tiles ---------- */
+:is(.ld-side, .ld-main):has(> .ld-panel.fit-folded, > .ld-panel:not(.open)) { display: grid; grid-template-columns: 1fr 1fr; grid-auto-flow: row dense; align-content: start; gap: 6px; }
+:is(.ld-side, .ld-main) > * { grid-column: 1 / -1; min-width: 0; }
+:is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) { grid-column: auto; }
+:is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) > .ld-ph { min-height: 0; padding-block: 0; }
+:is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) .ld-pt { min-height: 42px; padding-block: 4px; }
+:is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) .ld-ph h3 { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) .ld-pt { min-width: 0; flex: 1; }
+.ld-side > .ld-panel:is(.fit-folded, :not(.open)) .ld-pt > .ico { display: none; }
+.ld-side > .ld-panel:is(.fit-folded, :not(.open)) :is(.ld-hint, .ld-tools) { display: none; }
+.ld-side > .ld-panel:is(.fit-folded, :not(.open)) .ld-ph h3 { flex: 0 1 auto; min-width: 0; }
+.ld-side > .ld-panel:is(.fit-folded, :not(.open)) .ld-count { flex: none; margin-left: auto; }
+
+/* ---------- a block of only text fields (show bible…) sits in two columns ---------- */
+@media (min-width: 1000px) {
+  div:has(> .field:nth-child(4) > textarea.inp):not(:has(> :not(.field))) { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px; align-items: start; }
+  div:has(> .field:nth-child(4) > textarea.inp):not(:has(> :not(.field))) > .field { margin-bottom: 10px; }
+}
+.ld { padding-bottom: 10px !important; }
+.ld-alert { padding-block: 4px !important; }
+@media (min-width: 1000px) and (max-height: 900px) { .loc-photo { height: 110px !important; } }
+
+/* ---------- folded section headings gather into a row of chips ---------- */
+@media screen {
+.fit-secs:has(> .fit-sec.shut) { display: flex !important; flex-wrap: wrap; column-gap: 6px; align-content: flex-start; align-items: flex-start; }
+.fit-secs:has(> .fit-sec.shut) > * { flex: 1 1 100%; min-width: 0; }
+.cs.fit-secs > .fit-sec.shut { background: transparent; border-color: currentColor; }
+.fit-secs > .fit-sec.shut { flex: 0 0 auto; margin: 6px 0 0 !important; padding: 6px 12px !important; border: 1px solid var(--border); border-radius: 999px; background: var(--surface2); min-height: 36px; }
+html[data-touch] .fit-secs > .fit-sec.shut { min-height: 40px; }
+.fit-secs > .fit-sec.shut::after { content: attr(data-n); margin-left: 0; }
+.fit-secs > .fit-sec.shut[data-n=""]::after { content: none; }
+.fit-secs > .fit-sec:not(.shut) + * { margin-top: 4px; }
+.fit-secs > .fit-sec.shut + .fit-off + :not(.fit-sec) { margin-top: 10px; }
+.cs.fit-secs > .fit-sec.shut { color: #111; }
+}
+
+/* rows of an open call-sheet section, a page at a time */
+tr.fit-rowoff { display: none; }
+tr.fit-csp td { text-align: center; padding: 4px !important; background: transparent; }
+tr.fit-csp span { display: inline-block; min-width: 90px; font-size: 12px; font-weight: 600; }
+tr.fit-csp button { min-width: 44px; min-height: 36px; border: 1px solid currentColor; border-radius: 999px; background: transparent; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+tr.fit-csp button:disabled { opacity: .3; cursor: default; }
+
+/* printing shows the whole document: every section, every row, no pagers */
+@media print {
+  .cs .fit-off, tr.fit-rowoff { display: revert !important; }
+  table.tbl tr.fit-off { display: table-row !important; }
+  .fit-lp, .fit-pager, .fit-foot, tr.fit-csp { display: none !important; }
+  .fit-sec::before, .fit-sec::after { display: none !important; }
+}
+

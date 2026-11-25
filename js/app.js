@@ -104,12 +104,16 @@ function renderShell(view, arg) {
     rail.append(h('div', { class: 'nav-label' }, g.label));
     g.items.forEach(it => { const [k, label, ic, fi] = it, inHub = fi && fi.members.includes(view); rail.append(h('a', { class: 'nav-a' + ((fi ? inHub : k === view) ? ' on' : ''), href: fi ? hubHref(P, it) : `#/p/${P.id}/${k}`, title: fi ? `${label}: ${fi.members.map(m => featureLabel(P, m)).join(', ')}` : label }, icon(ic, 19), h('span', { class: 't' }, label))); });
   });
+  /* the rarely used links share one "More" item, so the sections always fit the rail */
+  const railWide = () => { const w = document.documentElement.dataset.rail === 'wide' ? '' : 'wide'; if (w) document.documentElement.dataset.rail = w; else delete document.documentElement.dataset.rail; try { localStorage.setItem('sb-rail', w); } catch (x) { } };
   rail.append(h('div', { class: 'grow' }), h('div', { class: 'nav-sep' }),
-    h('a', { class: 'nav-a', href: '#', onclick: e => { e.preventDefault(); openSettings(P); } }, icon('wand', 19), h('span', { class: 't' }, 'Customize tabs')),
-    h('a', { class: 'nav-a', href: '#/' }, icon('home', 19), h('span', { class: 't' }, 'All projects')),
-    h('a', { class: 'nav-a', href: '#', onclick: e => { e.preventDefault(); showShortcuts(); } }, icon('keyboard', 19), h('span', { class: 't' }, 'Shortcuts')),
-    /* on a tablet the rail is icons only; this shows the section names when you want them */
-    h('a', { class: 'nav-a rail-toggle', href: '#', title: 'Show or hide section names', onclick: e => { e.preventDefault(); const w = document.documentElement.dataset.rail === 'wide' ? '' : 'wide'; if (w) document.documentElement.dataset.rail = w; else delete document.documentElement.dataset.rail; try { localStorage.setItem('sb-rail', w); } catch (x) { } } }, icon('right', 19), h('span', { class: 't' }, 'Hide names')));
+    h('a', { class: 'nav-a', href: '#', title: 'Customize tabs, all projects, shortcuts', onclick: e => { e.preventDefault(); menu(e.currentTarget, [
+      { label: 'Customize tabs', icon: 'wand', onClick: () => openSettings(P) },
+      { label: 'All projects', icon: 'home', onClick: () => { location.hash = '#/'; } },
+      { label: 'Keyboard shortcuts', icon: 'keyboard', onClick: showShortcuts },
+      /* on a tablet the rail is icons only; this shows the section names when you want them */
+      document.documentElement.dataset.touch ? { label: document.documentElement.dataset.rail === 'wide' ? 'Hide section names' : 'Show section names', icon: 'right', onClick: railWide } : null,
+    ].filter(Boolean)); } }, icon('more', 19), h('span', { class: 't' }, 'More')));
   const title = h('input', { class: 'ptitle', value: P.title, 'aria-label': 'Project title', oninput: e => { P.title = e.target.value; Store.touch(); document.title = P.title + ' — StudioBindahh'; } });
   const syncBtn = h('button', { class: 'icon-btn', id: 'syncBtn', title: 'Folder sync', 'aria-label': 'Folder sync', onclick: () => Sync.panel() }, icon('cloud'), h('i', { id: 'syncDot', class: 'syncdot', style: { position: 'absolute', margin: '10px 0 0 -6px' } }));
   const top = h('header', { id: 'topbar' }, title, h('span', { class: 'pill accent' }, MODE_LABEL[P.mode] || 'Screenplay'), regionChip(P), h('span', { class: 'grow' }),
