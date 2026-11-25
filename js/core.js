@@ -224,11 +224,21 @@ function menu(anchor, items) {
 }
 
 /* ---------- file helpers ---------- */
+/* content is text, or bytes (a Uint8Array). The file's address is kept for a minute: a big file
+   on a slow tablet is still being saved long after the click, and taking the address away early
+   leaves a cut-off file. */
 function download(name, content, type = 'text/plain') {
-  const url = URL.createObjectURL(new Blob([content], { type: type + ';charset=utf-8' }));
+  const bin = content instanceof Uint8Array;
+  const url = URL.createObjectURL(new Blob([content], { type: bin ? type : type + ';charset=utf-8' }));
   const a = h('a', { href: url, download: name });
-  document.body.append(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 800);
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+/* a project or every project as a checked .studiobindahh file (see js/models/savefile.model.js) */
+async function downloadBackup(b) {
+  if (!b) return false;
+  try { download(b.name, await SaveFile.write(b.data, b.meta), 'application/octet-stream'); return true; }
+  catch (e) { toast('Backup failed: ' + (e.message || e), true); return false; }
 }
 function pickFile(accept) {
   return new Promise(res => {
@@ -288,12 +298,26 @@ const DB = {
       r.onerror = () => no(r.error);
     });
   },
-  store(m) { return DB.db.transaction('projects', m).objectStore('projects'); },
-  all() { return new Promise((ok, no) => { const r = DB.store('readonly').getAll(); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }); },
-  put(p) { return new Promise((ok, no) => { const r = DB.store('readwrite').put(p); r.onsuccess = ok; r.onerror = () => no(r.error); }); },
-  getMeta(k) { return new Promise((ok, no) => { const r = DB.db.transaction('meta', 'readonly').objectStore('meta').get(k); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }); },
-  setMeta(k, v) { return new Promise((ok, no) => { const r = DB.db.transaction('meta', 'readwrite').objectStore('meta').put(v, k); r.onsuccess = ok; r.onerror = () => no(r.error); }); },
-  del(id) { return new Promise((ok, no) => { const r = DB.store('readwrite').delete(id); r.onsuccess = ok; r.onerror = () => no(r.error); }); },
+  /* every call settles when its transaction has committed (or failed), not when the request was
+     queued — so 'saved' means saved, and a full disk shows up as an error instead of vanishing */
+  tx(name, mode, fn) {
+    return new Promise((ok, no) => {
+      let t; try { t = DB.db.transaction(name, mode); } catch (e) { return no(e); }
+      let out; const r = fn(t.objectStore(name)); if (r) r.onsuccess = () => { out = r.result; };
+      t.oncomplete = () => ok(out);
+      t.onerror = e => { e.preventDefault(); };                     // reported once, by onabort
+      t.onabort = () => no(DB.why(t.error));
+    });
+  },
+  why(e) {
+    if (e && e.name === 'QuotaExceededError') return new Error('this device is out of storage space. Download a backup, then free some space');
+    return e || new Error('the browser cancelled the save');
+  },
+  all() { return DB.tx('projects', 'readonly', s => s.getAll()); },
+  put(p) { return DB.tx('projects', 'readwrite', s => s.put(p)); },
+  getMeta(k) { return DB.tx('meta', 'readonly', s => s.get(k)); },
+  setMeta(k, v) { return DB.tx('meta', 'readwrite', s => s.put(v, k)); },
+  del(id) { return DB.tx('projects', 'readwrite', s => s.delete(id)); },
 };
 
 function setSaveState(s) {

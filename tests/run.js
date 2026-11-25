@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..');
 const list = dir => fs.existsSync(path.join(root, dir)) ? fs.readdirSync(path.join(root, dir)).filter(f => f.endsWith('.js')).sort().map(f => path.join(dir, f)) : [];
 
 const files = ['js/mvvm.js', ...list('js/models'), ...list('js/viewmodels'), 'tests/harness.js', ...list('tests').filter(f => f.endsWith('.test.js'))];
-const ctx = vm.createContext({ console, setTimeout, clearTimeout });
+const ctx = vm.createContext({ console, setTimeout, clearTimeout, TextEncoder, TextDecoder, CompressionStream, DecompressionStream, Response, Blob, atob, btoa });
 for (const f of files) vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), ctx, { filename: f });
 
 vm.runInContext('runTests()', ctx).then(r => { process.exitCode = r.fails.length ? 1 : 0; });

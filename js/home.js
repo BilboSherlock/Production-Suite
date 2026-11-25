@@ -13,7 +13,7 @@ function renderHome() {
     h('div', { class: 'body' }, h('div', { class: 'row wrap' }, h('span', { class: 'pill accent' }, c.modeLabel), c.series ? h('span', { class: 'pill' }, c.series) : null, h('span', { class: 'small muted' }, c.stats)),
       h('div', { class: 'small muted' }, c.edited),
       h('div', { class: 'acts' }, h('button', { class: 'btn sm ghost', onclick: async e => { e.stopPropagation(); await vm.duplicate(c.id); toast('Project duplicated'); } }, icon('copy', 14), 'Duplicate'),
-        h('button', { class: 'btn sm ghost', onclick: e => { e.stopPropagation(); const b = vm.backupOf(c.id, slug); if (b) download(b.name, b.json, 'application/json'); } }, icon('download', 14), 'Backup'),
+        h('button', { class: 'btn sm ghost', onclick: async e => { e.stopPropagation(); if (await downloadBackup(vm.backupOf(c.id, slug))) toast('Backup downloaded'); } }, icon('download', 14), 'Backup'),
         h('span', { class: 'grow' }), h('button', { class: 'icon-btn danger', title: 'Delete project', onclick: async e => { e.stopPropagation(); const p = vm.project(c.id); if (p && await confirmBox(`Delete “${p.title}” and everything in it? This can't be undone — consider downloading a backup first.`)) { await vm.remove(c.id); toast('Project deleted'); } } }, icon('trash', 16)))));
   const draw = () => morph(app, [
     !Store.persist ? h('div', { style: { background: 'var(--warn)', color: '#000', padding: '8px 16px', fontSize: '14px' } }, 'Your browser is blocking local storage, so projects will be lost when you close this tab. Use the Backup button to save your work.') : null,
@@ -58,10 +58,10 @@ function newProjectModal(vm = new HomeVM()) {
 }
 
 function importProjectModal(vm = new HomeVM()) {
-  const info = h('p', { style: { marginTop: 0 }, class: 'muted' }, 'Choose a StudioBindahh backup (.json), or a script as a PDF, Fountain (.fountain, .txt), Highland (.highland) or Final Draft (.fdx).');
+  const info = h('p', { style: { marginTop: 0 }, class: 'muted' }, 'Choose a StudioBindahh backup (.studiobindahh, or an older .json), or a script as a PDF, Fountain (.fountain, .txt), Highland (.highland) or Final Draft (.fdx).');
   const box = h('div', {}, info, h('label', { class: 'lbl' }, 'If importing a script, treat it as'), h('div', { class: 'typepick' },
     h('label', {}, h('input', { type: 'radio', name: 'imode', value: 'screenplay', checked: true }), h('b', {}, 'Screenplay')), h('label', {}, h('input', { type: 'radio', name: 'imode', value: 'stage' }), h('b', {}, 'Stage play'))));
-  modal({ title: 'Import', body: box, buttons: [{ label: 'Cancel' }, { label: 'Choose file…', primary: true, onClick: () => { const mode = $('input[name=imode]:checked', box).value; pickFile('.json,.fountain,.txt,.fdx,.md,.pdf,.highland,.zip').then(f => f && doImport(vm, f, mode)); } }] });
+  modal({ title: 'Import', body: box, buttons: [{ label: 'Cancel' }, { label: 'Choose file…', primary: true, onClick: () => { const mode = $('input[name=imode]:checked', box).value; pickFile('.studiobindahh,.json,.fountain,.txt,.fdx,.md,.pdf,.highland,.zip,application/octet-stream').then(f => f && doImport(vm, f, mode)); } }] });
 }
 async function doImport(vm, f, mode) {
   const open = p => { location.hash = `#/p/${p.id}/script`; };
@@ -70,21 +70,24 @@ async function doImport(vm, f, mode) {
     return;
   }
   try {
-    const txt = await readScriptFile(f), plural = HomeModel.plural;
-    if (/\.json$/i.test(f.name)) {
-      const r = await vm.importJson(txt);
+    const plural = HomeModel.plural;
+    const magic = String.fromCharCode(...new Uint8Array(await f.slice(0, 4).arrayBuffer()));   // a tablet may rename an unfamiliar file (….bin)
+    if (SaveFile.isBackup(f.name) || magic === 'SBX1') {
+      const r = await vm.importFile(new Uint8Array(await f.arrayBuffer()));
+      if (!r.complete) setTimeout(() => modal({ title: 'Recovered from a damaged backup', body: h('div', {}, ...r.problems.map(t => h('p', { style: { marginTop: 0 } }, t)),
+        h('p', { class: 'muted small' }, 'What could be read was imported as a new project, marked “(recovered)”. If the device that made the backup still has the project, download a fresh backup from it.')), buttons: [{ label: 'OK', primary: true }] }), 400);
       if (r.contacts != null) toast(r.restored == null && !r.project ? `Imported ${plural(r.contacts, 'contact')}` : `Merged ${plural(r.contacts, 'contact')}`);
       if (r.restored != null) toast(`Restored ${plural(r.restored, 'project')}`);
       if (r.project) { open(r.project); toast('Imported “' + r.project.title + '”'); }
       return;
     }
-    const p = await vm.importScript(txt, f.name, mode); open(p); toast('Imported “' + p.title + '”');
+    const p = await vm.importScript(await readScriptFile(f), f.name, mode); open(p); toast('Imported “' + p.title + '”');
   } catch (e) { toast('Import failed: ' + (e.message || e), true); }
 }
 
 /* every project and the contacts in one file (also on the project Backup menu) */
-function backupAll() {
+async function backupAll() {
   const b = new HomeVM().backupAll(); if (!b) return toast('There are no projects to back up yet.', true);
-  download(b.name, b.json, 'application/json');
+  if (!(await downloadBackup(b))) return;
   toast(`Backed up ${HomeModel.plural(b.n, 'project')}`);
 }

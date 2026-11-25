@@ -21,13 +21,13 @@ test('home: cards, new and copied projects', () => {
   const eps = [{ series: { season: 1, ep: 2 } }, { series: { season: 1, ep: 5 } }, { series: { season: 2, ep: 9 } }];
   const c = HMM.copy(P.c, eps, 77); eq([c.id !== 'c', c.title, c.series.ep, c.created, c.updated, P.c.series.ep], [true, 'Ep (copy)', 6, 77, 77, 2], 'the next episode of its season');
   const q = { id: 'a', title: 'Alpha' }; HMM.unclash(q, P); eq([q.id !== 'a', q.title], [true, 'Alpha (imported)']); eq(HMM.unclash({ id: 'new', title: 'N' }, P).title, 'N');
-  eq(HMM.fileName(P.a, t => t.toLowerCase()), 'alpha.studiobindahh.json');
+  eq(HMM.fileName(P.a, t => t.toLowerCase()), 'alpha.studiobindahh');
 });
 
 test('home: backups and reading an import', () => {
   eq(HMM.bundle({}, [], {}, 1), null);
-  const b = HMM.bundle(hmProjects(), [{ name: 'Zed' }], { preset: 'film', on: ['x'], other: 1 }, 5), j = JSON.parse(b.json);
-  eq([b.name, b.n, j.studiobindahh, j.version, j.exported, j.projects.length, j.contacts, j.prefs], ['studiobindahh-all-projects.json', 3, 'bundle', 3, 5, 3, [{ name: 'Zed' }], { preset: 'film', on: ['x'] }]);
+  const b = HMM.bundle(hmProjects(), [{ name: 'Zed' }], { preset: 'film', on: ['x'], other: 1 }, 5), j = b.data;
+  eq([b.name, b.n, j.studiobindahh, j.version, j.exported, j.projects.length, j.contacts, j.prefs], ['studiobindahh-all-projects.studiobindahh', 3, 'bundle', 3, 5, 3, [{ name: 'Zed' }], { preset: 'film', on: ['x'] }]);
   eq([HMM.classify({ contacts: [] }), HMM.classify({ projects: [], contacts: [1] }).project, HMM.classify({ blocks: [] }).project], [{ contacts: [], projects: null, project: null }, null, { blocks: [] }]);
   const list = [{ id: '1', name: 'Ann', email: 'a@x' }];
   eq([HMM.mergeContacts(list, [{ id: '1', name: 'Other' }, { id: '2', name: 'Ann', email: 'a@x' }, { id: '3', name: 'Ann' }, { id: '4' }, null]), list.map(c => c.id)], [1, ['1', '3']], 'same id, or same name and email, is skipped');
@@ -49,10 +49,14 @@ test('home vm: cards, create, duplicate, delete and import', async () => {
   eq((await vm.create({ title: 'Same', region: 'US' })).regionApplied, undefined, 'the region is applied only when it differs');
   const d0 = draws, c = await vm.duplicate('c'); eq([c.title, c.series.ep, draws, await vm.duplicate('zz')], ['Ep (copy)', 3, d0 + 1, null]);
   eq([await vm.remove('a'), await vm.remove('a'), removed], [true, false, ['a']]);
-  eq([vm.backupOf('b', t => 'f').name, vm.backupAll().n], ['f.studiobindahh.json', 5]);
+  eq([vm.backupOf('b', t => 'f').name, vm.backupOf('b', t => 'f').meta.kind, vm.backupAll().n, vm.backupAll().meta.kind], ['f.studiobindahh', 'project', 5, 'bundle']);
+  const file = await vm.backupFile(vm.backupAll()), back = await SaveFile.decode(file);
+  eq([back.kind, back.complete, back.data.projects.length], ['bundle', true, 5], 'back up all writes a checked file');
   const r1 = await vm.importJson(JSON.stringify({ contacts: [{ id: 'k', name: 'Kay' }] })); eq([r1, contacts.length, saved], [{ contacts: 1, restored: null, project: null }, 1, 1]);
   const r2 = await vm.importJson(JSON.stringify({ projects: [{ id: 'b', title: 'Bee', blocks: [] }, { id: 'n' }, null] })); eq([r2.restored, Object.values(P).some(x => x.title === 'Bee (imported)')], [1, true]);
   const r3 = await vm.importJson(JSON.stringify({ id: 'q', title: 'Q', blocks: [] })); eq([r3.project.id, r3.contacts], ['q', null]);
+  const cut = new TextEncoder().encode(JSON.stringify({ id: 'cut', title: 'Cut', blocks: [{ id: 'x', text: 'kept' }], boards: [{ id: 'b1' }, { id: 'b2', note: 'lost part-way' }] }).slice(0, -20));
+  const r4 = await vm.importFile(cut); eq([r4.complete, r4.project.title, r4.project.blocks[0].text, r4.project.boards.map(b => b.id).join(), /boards/.test(r4.problems[0])], [false, 'Cut (recovered)', 'kept', 'b1', true], 'a cut-off backup gives back what it can (a half-written item is left out)');
   let err = ''; try { await vm.importJson(JSON.stringify({ id: 'z' })); } catch (e) { err = e.message; } eq(err, 'Not a StudioBindahh project');
   const s = await vm.importScript('Hello', 'My Film.fountain', 'stage'); eq([s.title, s.mode, s.meta.author, s.meta.draft, s.blocks.length], ['My Film', 'stage', 'Bo', 'Jan', 1]);
   err = ''; try { await vm.importScript('', 'x.txt', 'screenplay'); } catch (e) { err = e.message; } eq(err, 'No script content found');

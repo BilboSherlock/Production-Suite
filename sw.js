@@ -5,7 +5,7 @@
    opens instantly on weak on-set Wi-Fi.
    Fonts and the PDF reader (other origins): cached after first use.
    Live-collaboration traffic (/api/) is never touched. */
-const VERSION = 'sb-v49';
+const VERSION = 'sb-v50';
 const APP = VERSION + '-app', EXTRA = VERSION + '-extra';
 const NET_TIMEOUT = 3500;   // ms to wait for the network before falling back to the cache
 

@@ -45,7 +45,11 @@ const Sync = {
   async push(p) {
     if (Sync.status !== 'on' || !Sync.dir) return;
     const fh = await Sync.dir.getFileHandle(Sync.fname(p), { create: true });
-    const w = await fh.createWritable(); await w.write(JSON.stringify(p)); await w.close();
+    /* the file is written whole and swapped in on close (createWritable), then checked: a cloud
+       folder that is full or offline fails here, so the project stays queued instead of looking synced */
+    const text = JSON.stringify(p), bytes = new TextEncoder().encode(text);
+    const w = await fh.createWritable(); try { await w.write(bytes); await w.close(); } catch (e) { try { await w.abort(); } catch (x) { } throw e; }
+    if ((await fh.getFile()).size !== bytes.length) throw new Error('The sync folder did not keep the whole file');
     Sync.last[p.id] = p.updated; Sync.saveLast(); Sync.paint(true);
   },
   async readRemote() {

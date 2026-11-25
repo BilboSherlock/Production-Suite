@@ -46,14 +46,14 @@ const HomeModel = (() => {
   /** an imported project whose id is already taken gets a new id and '(imported)' on its title */
   function unclash(q, projects) { if (projects[q.id]) { q.id = newId(); q.title += ' (imported)'; } return q; }
 
-  /** the "back up all" file → { name, json, n } or null when there is nothing to back up */
+  /** the "back up all" file → { name, data, n, meta } or null when there is nothing to back up */
   function bundle(projects, contacts, prefs, now) {
     const all = Object.values(projects); if (!all.length) return null;
-    return { name: 'studiobindahh-all-projects.json', n: all.length,
-      json: JSON.stringify({ studiobindahh: 'bundle', version: 3, exported: now, projects: all, contacts, prefs: { preset: prefs.preset, on: prefs.on } }) };
+    return { name: 'studiobindahh-all-projects' + SaveFile.EXT, n: all.length, meta: { kind: 'bundle', title: 'All projects', n: all.length, exported: now },
+      data: { studiobindahh: 'bundle', version: 3, exported: now, projects: all, contacts, prefs: { preset: prefs.preset, on: prefs.on } } };
   }
   /** a single project's backup file name */
-  const fileName = (p, slug) => slug(p.title) + '.studiobindahh.json';
+  const fileName = (p, slug) => slug(p.title) + SaveFile.EXT;
 
   /** what an imported .json holds → { contacts: [] | null, projects: [] | null, project: object | null } */
   function classify(j) {

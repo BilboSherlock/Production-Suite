@@ -122,8 +122,9 @@ function renderShell(view, arg) {
     h('span', { id: 'savestate' }, h('i'), 'All changes saved'),
     syncBtn, Collab.button(),
     h('button', { class: 'btn sm', title: 'Backup, print & clean up', 'aria-label': 'Backup', onclick: e => { const o = orphanReport(P); menu(e.currentTarget, [
-      { label: 'Download this project (.json)', icon: 'download', onClick: () => { download(slug(P.title) + '.studiobindahh.json', JSON.stringify(P), 'application/json'); toast('Backup downloaded'); } },
-      { label: 'Download ALL projects (.json)', icon: 'download', onClick: backupAll },
+      { label: 'Download this project', icon: 'download', onClick: async () => { await Store.flush(true); if (await downloadBackup(new HomeVM().backupOf(P.id, slug))) toast('Backup downloaded'); } },
+      { label: 'Download ALL projects', icon: 'download', onClick: async () => { await Store.flush(true); backupAll(); } },
+      { label: 'Download as plain JSON (.json)', icon: 'download', onClick: () => { download(slug(P.title) + '.studiobindahh.json', JSON.stringify(P), 'application/json'); toast('JSON downloaded'); } },
       { label: 'Print script', icon: 'print', onClick: () => printNode(scriptPrintNode(P)) },
       { sep: true },
       { label: o.total ? `Clean up unused data (${o.total} items)` : 'No unused data to clean up', icon: 'trash', onClick: async () => {

@@ -35,10 +35,12 @@ class HomeVM extends ViewModel {
   get contactCount() { return this._fx.contacts().length; }
   get defaultRegion() { return this._fx.region(); }
   project(id) { return this._fx.projects()[id] || null; }
-  /** a project's backup → { name, json } */
-  backupOf(id, slug) { const p = this.project(id); return p ? { name: HomeModel.fileName(p, slug), json: JSON.stringify(p) } : null; }
-  /** every project and the contacts → { name, json, n } or null */
+  /** a project's backup → { name, data, meta } (see backupFile) */
+  backupOf(id, slug) { const p = this.project(id); return p ? { name: HomeModel.fileName(p, slug), data: p, meta: { kind: 'project', title: p.title, n: 1, exported: this._fx.now() } } : null; }
+  /** every project and the contacts → { name, data, n, meta } or null */
   backupAll() { const f = this._fx; return HomeModel.bundle(f.projects(), f.contacts(), f.prefs(), f.now()); }
+  /** a backup from backupOf / backupAll → its file's bytes, checked to read back exactly (throws otherwise) */
+  async backupFile(b) { return SaveFile.write(b.data, b.meta); }
 
   /* ---------- projects ---------- */
   /** a new project → it (stored); o = { mode, title, region } */
@@ -60,8 +62,20 @@ class HomeVM extends ViewModel {
    * A .json file's text → { contacts: n | null, restored: n | null, project: the new project | null }.
    * Throws when it is neither a backup nor contacts.
    */
-  async importJson(text) {
-    const f = this._fx, C = HomeModel.classify(JSON.parse(text)), out = { contacts: null, restored: null, project: null };
+  async importJson(text) { return this.importData(JSON.parse(text)); }
+  /**
+   * a backup file's bytes (.studiobindahh, or an older .json) → importData's result plus
+   * { complete, problems }. A damaged or cut-off file gives back what could be read, its
+   * project titled '(recovered)'; problems say what was left out. Throws when nothing is readable.
+   */
+  async importFile(bytes) {
+    const r = await SaveFile.decode(bytes), d = r.data;
+    if (!r.complete && d && !Array.isArray(d.projects) && !Array.isArray(d.contacts) && typeof d.title === 'string') d.title += ' (recovered)';
+    return Object.assign(await this.importData(d), { complete: r.complete, problems: r.problems });
+  }
+  /** a backup's parsed contents → { contacts, restored, project } (see importJson) */
+  async importData(json) {
+    const f = this._fx, C = HomeModel.classify(json), out = { contacts: null, restored: null, project: null };
     if (C.contacts) { out.contacts = HomeModel.mergeContacts(f.contacts(), C.contacts); await f.saveContacts(); }
     if (C.projects) {
       let n = 0;
