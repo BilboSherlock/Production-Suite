@@ -18,7 +18,7 @@ function renderHome() {
   const draw = () => morph(app, [
     !Store.persist ? h('div', { style: { background: 'var(--warn)', color: '#000', padding: '8px 16px', fontSize: '14px' } }, 'Your browser is blocking local storage, so projects will be lost when you close this tab. Use the Backup button to save your work.') : null,
     h('div', { class: 'home-top' }, h('span', { class: 'logo', style: { padding: 0 } }, h('span', { class: 'mark' }, icon('film', 18)), 'StudioBindahh'), h('span', { class: 'grow' }),
-      h('button', { class: 'btn sm', id: 'syncBtn', onclick: () => Sync.panel() }, icon('cloud', 15), 'Folder sync', h('i', { id: 'syncDot', class: 'syncdot' })),
+      h('button', { class: 'btn sm', id: 'syncBtn', onclick: () => Sync.panel() }, icon('cloud', 15), 'Sync', h('i', { id: 'syncDot', class: 'syncdot' })),
       h('button', { class: 'btn sm collab-btn' + (Collab.sess ? ' live' : ''), onclick: () => Collab.sess ? Collab.livePanel() : Collab.joinModal() }, icon('users', 15), Collab.sess ? 'Live session' : 'Join a session'),
       h('a', { class: 'btn sm', href: '#/budgets' }, icon('dollar', 15), 'Budgets'),
       h('a', { class: 'btn sm', href: '#/contacts' }, icon('users', 15), `Contacts${vm.contactCount ? ' (' + vm.contactCount + ')' : ''}`),

@@ -347,7 +347,7 @@ const Store = {
     try { await DB.put(P); if (!Store.dirty) setSaveState('saved'); if (window.Sync) Sync.queuePush(P); } catch (e) { Store.dirty = true; setSaveState('error'); toast('Could not save: ' + (e.message || e), true); }
   },
   async add(p) { if (typeof finEnsure === 'function') finEnsure(p); Store.projects[p.id] = p; if (Store.persist) await DB.put(p); },
-  async remove(id) { delete Store.projects[id]; if (Store.persist) await DB.del(id); },
+  async remove(id) { delete Store.projects[id]; if (Store.persist) await DB.del(id); if (window.Sync) Sync.removed(id); },
 };
 
 function blankPhoto() {

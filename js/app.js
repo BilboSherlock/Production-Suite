@@ -115,7 +115,7 @@ function renderShell(view, arg) {
       document.documentElement.dataset.touch ? { label: document.documentElement.dataset.rail === 'wide' ? 'Hide section names' : 'Show section names', icon: 'right', onClick: railWide } : null,
     ].filter(Boolean)); } }, icon('more', 19), h('span', { class: 't' }, 'More')));
   const title = h('input', { class: 'ptitle', value: P.title, 'aria-label': 'Project title', oninput: e => { P.title = e.target.value; Store.touch(); document.title = P.title + ' — StudioBindahh'; } });
-  const syncBtn = h('button', { class: 'icon-btn', id: 'syncBtn', title: 'Folder sync', 'aria-label': 'Folder sync', onclick: () => Sync.panel() }, icon('cloud'), h('i', { id: 'syncDot', class: 'syncdot', style: { position: 'absolute', margin: '10px 0 0 -6px' } }));
+  const syncBtn = h('button', { class: 'icon-btn', id: 'syncBtn', title: 'Sync', 'aria-label': 'Sync', onclick: () => Sync.panel() }, icon('cloud'), h('i', { id: 'syncDot', class: 'syncdot', style: { position: 'absolute', margin: '10px 0 0 -6px' } }));
   const top = h('header', { id: 'topbar' }, title, h('span', { class: 'pill accent' }, MODE_LABEL[P.mode] || 'Screenplay'), regionChip(P), h('span', { class: 'grow' }),
     ibtn('search', 'Search the project (Ctrl+K)', () => openSearch()),
     histOn ? [hUndo, hRedo] : null,
