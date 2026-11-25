@@ -59,7 +59,7 @@ class ScheduleVM extends ViewModel {
   strip(slot) {
     const P = this.P, isSlot = !!slot.scene, s = isSlot ? slot.scene : slot, part = (isSlot && slot.part) || null, frac = (isSlot && slot.frac) || 1;
     return { id: isSlot ? slot.key : s.id, sceneId: s.id, num: s.num, part: part ? { n: part.n, of: part.of, note: part.note || '' } : null, label: (isSlot && slot.label) || '',
-      cls: ScheduleModel.stripClass(s), ie: `${s.ioe || '—'}·${(s.tod || '').slice(0, 5) || '—'}`,
+      cls: ScheduleModel.stripClass(s), ie: ScheduleModel.stripLabel(s),
       title: this._fx.locName(P, s) || s.label, sub: (part && part.note) || s.synopsis || [...this._fx.sceneCast(P, s)].slice(0, 5).join(', ') || s.heading,
       eighths: isSlot ? slot.eighths : s.eighths, mins: this._fx.sceneEst(P, s) * frac };
   }

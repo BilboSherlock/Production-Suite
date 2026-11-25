@@ -152,3 +152,9 @@ test('schedule vm: print groups by day then unscheduled', () => {
   eq(g.map(x => [x.day && x.day.n, x.rows.map(r => r[0])]), [[1, ['2']], [null, ['1', '3']]]);
   eq(g[0].rows[0], ['2', 'INT', 'DAY', 'PARK', undefined, 'ANA', 4]);
 });
+
+test('schedule: strip labels use standard abbreviations and never cut a word', () => {
+  const L = s => ScheduleModel.stripLabel(s);
+  eq([L({ ioe: 'INT', tod: 'DAY' }), L({ ioe: 'EXT', tod: 'MORNING' }), L({ ioe: 'INT/EXT', tod: 'CONTINUOUS' }), L({ ioe: 'INT', tod: 'Moments later' })], ['INT·DAY', 'EXT·MORN', 'INT/EXT·CONT', 'INT·LATER']);
+  eq([L({ ioe: '', tod: 'LATER' }), L({}), L({ ioe: 'EXT', tod: 'Late afternoon' })], ['LATER', '—', 'EXT·LATE'], 'a stage scene has no INT/EXT; a long time of day keeps its first word');
+});

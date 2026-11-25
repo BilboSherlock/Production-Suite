@@ -76,7 +76,9 @@ function deviceSection() {
         h('span', { class: 'dev-ico' }, icon(k === 'desktop' ? 'monitor' : k === 'ideatab' ? 'tablet' : 'wand', 22)), h('b', {}, d.label), h('span', { class: 'small muted' }, d.desc),
         d.specs ? h('ul', { class: 'dev-specs' }, d.specs.map(x => h('li', {}, x))) : null))),
       h('div', { class: 'small muted', style: { margin: '8px 0 4px' } }, vm.inUse(innerWidth, innerHeight)),
-      seg('Touch targets', [['auto', 'Follow device'], ['on', 'Always large'], ['off', 'Always compact']], vm.mode, k => vm.setMode(k))]);
+      seg('Touch targets', [['auto', 'Follow device'], ['on', 'Always large'], ['off', 'Always compact']], vm.mode, k => vm.setMode(k)),
+      seg('Long tables & lists', [['scroll', 'Scroll'], ['page', 'Pages']], vm.lists, k => vm.setLists(k)),
+      h('div', { class: 'small muted', style: { margin: '4px 0 0' } }, vm.lists === 'page' ? 'Long tables and lists show a screenful at a time, with ‹ › to turn pages.' : 'Long tables and lists scroll by touch or wheel inside the screen, with no scrollbar — their edges fade where there is more. Short ones still fit or page.')]);
   });
   return box;
 }

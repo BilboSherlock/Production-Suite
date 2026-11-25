@@ -1,11 +1,14 @@
 'use strict';
 /* ===================================================================
    Fit — keeps every screen on the screen, with no scrollbars.
+   (Styles: css/fit.css, which also handles the safe areas — the status
+   bar at the top and the gesture handle at the bottom.)
 
    Smart tables: every table.tbl is laid out to the width it has.
-     · Columns are sized from their content. When they do not all fit,
-       the least important ones fold into the row: a chevron at the end
-       of the row opens it and shows them underneath, labelled.
+     · Columns are sized from their content; spare width goes to the most
+       important columns first. When they do not all fit, the least
+       important ones fold into the row: a chevron at the end of the row
+       opens it and shows them underneath, labelled.
      · Rows are paged to the height there is room for, with a pager in
        the table's footer (‹ ›, swipe on a touch screen, or Show all).
        A row that is added, searched for or focused is paged to.
@@ -16,16 +19,28 @@
      data-pri="0…100" on a header cell says how long a column stays
      (higher stays longer).
 
-   Scroll hints: a panel that still has more than fits (a long script,
-   a call sheet) scrolls by touch, wheel or keyboard with no bar; its
-   edges fade where there is more to see.
+   Lists and card grids (LISTS, data-fit-list, and scrolling panes that
+   are mostly one kind of item) page the same way, by whole rows.
 
-   The rail folds tighter when its sections would not fit.
+   Folding, when a screen is full (nothing is ever lost — a tap opens it):
+     · cards in FOLDS (data-fit-fold) fold to their header line; the one
+       in use stays open;
+     · <details> in data-fit-accordion fold, oldest opened first;
+     · live-desk panels fold for now (the desk's own fold setting is left
+       alone) and pair up as tiles;
+     · documents in sections (the call sheet, data-fit-sections, blocks of
+       headings) fold their biggest sections into a row of chips, and an
+       open section that is still too tall shows its rows a page at a
+       time. Printing always shows the whole document.
+
+   Toolbars drop their labels to icons when they would wrap; the rail
+   tightens. Only the script editor scrolls (no bar; its edges fade).
 
    Views redraw with morph(), which drops anything added here; a
-   MutationObserver puts it back before the next paint. State (which
-   page, which rows are open, which groups are folded) lives here, per
-   table, so redraws keep it.
+   MutationObserver puts it back before the next paint, and a
+   ResizeObserver looks again when a screen's content changes size.
+   State (which page, which rows are open, which groups are folded)
+   lives here, so redraws keep it.
    =================================================================== */
 const Fit = (() => {
   const S = new WeakMap();          // table → state
@@ -34,11 +49,24 @@ const Fit = (() => {
   const FORM = 'input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]), select, textarea';
   let mo = null, busy = false, raf = 0;
   const touch = () => !!document.documentElement.dataset.touch;
+  /* long tables and lists scroll (no bar) rather than page — the user's choice in Settings → Device */
+  const scrollMode = () => document.documentElement.dataset.lists !== 'page';
+  const LONG = 3;   // pages: a table or list this long scrolls in scroll mode; shorter ones page
+  /* What folds is decided when a screen opens (and for a moment after, while it settles), when the
+     window changes size, when you fold or open something, or when items come or go. Between those,
+     a redraw (a clock ticking, a box ticked) puts back the same folds, so nothing moves while you work. */
+  let refoldUntil = 0, refoldNow = true;
+  const refold = () => refoldNow || Date.now() < refoldUntil;
+  const settle = ms => { refoldUntil = Math.max(refoldUntil, Date.now() + (ms || 1200)); };
+  const MEM = new Map();   // scope → { sig, shut: Set of item keys }
+  const memo = (scope, sig) => { const m = MEM.get(scope); return !refold() && m && m.sig === sig ? m : null; };
 
   const state = t => { let s = S.get(t); if (!s) { s = { page: 0, cpage: 0, open: new Set(), shut: new Set(), all: false, keys: null, sig: '', m: null }; S.set(t, s); } return s; };
   const px = v => (/px$/.test(v || '') ? parseFloat(v) : 0);
   const rowKey = (tr, i) => tr.dataset.key || ('#' + i);
   const isGrp = tr => tr.classList.contains('grp');
+  /* a group row's identity: its data-key, else its text without counts that change ("0/2 done") */
+  const grpKey = tr => tr.dataset.key || textOf(tr).replace(/\d+\s*\/\s*\d+.*$/, '').trim();
   const textOf = el => (el.textContent || '').replace(/\s+/g, ' ').trim();
 
   /* the element that scrolls this table (or the window) */
@@ -69,7 +97,7 @@ const Fit = (() => {
         if (c.offsetWidth > 46) tiny = false;
         if (action && textOf(c) && !c.querySelector('button, .icon-btn')) action = false; });
       if (!rows.length) tiny = false;
-      want = Math.min(Math.max(want, 28, Math.min(floor, 300)), long ? 360 : 300);
+      want = Math.min(Math.max(want, 28, Math.min(floor, 300)), long ? 360 : i === 0 ? 440 : 300);   // the first (naming) column may run wider
       let min = want <= 116 ? want : Math.min(200, Math.max(116, Math.round(want * .55)));
       if (floor) min = Math.max(min, Math.min(floor, 220));
       const hint = th.dataset.pri;
@@ -121,7 +149,15 @@ const Fit = (() => {
 
     /* grid template */
     const vis = cols.map((c, i) => i).filter(i => !hid.has(i));
-    const tpl = vis.map(i => `minmax(${cols[i].min}px, ${cols[i].tiny ? 'max-content' : Math.max(1, Math.round(cols[i].want)) + 'fr'})`);
+    /* spare width goes to the most important columns first, up to what their content wants,
+       so a name is shown whole before an empty column is made roomier */
+    const floor = new Map(vis.map(i => [i, cols[i].min]));
+    let spare = avail - vis.reduce((a, i) => a + cols[i].min + 2, 0) - (fold ? xw : 0);
+    for (const i of [...vis].sort((a, b) => cols[b].pri - cols[a].pri || a - b)) {
+      if (spare <= 0) break; if (cols[i].tiny) continue;
+      const add = Math.min(spare, Math.max(0, cols[i].want - floor.get(i))); floor.set(i, floor.get(i) + add); spare -= add;
+    }
+    const tpl = vis.map(i => `minmax(${Math.round(floor.get(i))}px, ${cols[i].tiny ? 'max-content' : Math.max(1, Math.round(cols[i].want)) + 'fr'})`);
     if (fold) tpl.push(`${xw}px`);
     t.classList.add('fit'); t.classList.toggle('fit-fold', fold);
     if (!s.ro) { s.ro = true; ro.observe(t); }
@@ -170,7 +206,7 @@ const Fit = (() => {
 
     /* folded groups */
     let inShut = false;
-    body.forEach(tr => { if (isGrp(tr)) { inShut = s.shut.has(textOf(tr)); tr.classList.toggle('fit-shut', inShut); return; } tr.classList.toggle('fit-gc', inShut); });
+    body.forEach(tr => { if (isGrp(tr)) { inShut = s.shut.has(grpKey(tr)); tr.classList.toggle('fit-shut', inShut); return; } tr.classList.toggle('fit-gc', inShut); });
 
     page(t, s, body, newKey, cinfo);
   }
@@ -180,12 +216,13 @@ const Fit = (() => {
     const td = tr.cells[0]; if (!td) return;
     let b = td.querySelector(':scope > .fit-g');
     if (!b) { b = Object.assign(document.createElement('button'), { className: 'fit-g', type: 'button' }); td.prepend(b); }
-    const shut = s.shut.has(textOf(tr)); b.setAttribute('aria-expanded', shut ? 'false' : 'true'); b.title = shut ? 'Show this group' : 'Fold this group'; b.setAttribute('aria-label', b.title);
+    const shut = s.shut.has(grpKey(tr)); b.setAttribute('aria-expanded', shut ? 'false' : 'true'); b.title = shut ? 'Show this group' : 'Fold this group'; b.setAttribute('aria-label', b.title);
   }
 
   /* ---------- rows that fit ---------- */
   function page(t, s, body, newKey, cinfo) {
     body.forEach(tr => tr.classList.remove('fit-off'));
+    if (t.style.maxHeight) { t.style.maxHeight = ''; t.classList.remove('fit-scroll'); }
     /* rows the view itself hides (closed detail rows) don't count */
     const rows = body.filter(tr => !tr.classList.contains('fit-gc') && tr.offsetHeight > 0);
     const sc = scroller(t), noPage = t.dataset.fit === 'nopage' || s.all || !sc;
@@ -209,6 +246,20 @@ const Fit = (() => {
         for (let p = 0; p < pages.length - 1; p++) { const pg = pages[p]; if (pg.length > 1 && isGrp(pg[pg.length - 1])) pages[p + 1].unshift(pg.pop()); }
       }
     }
+    /* scroll mode: a long table becomes a box the height of the space left, scrolled by touch (header stays) */
+    const scroll = scrollMode() && !s.all && pages.length >= LONG && sc;
+    t.classList.toggle('fit-scroll', !!scroll);
+    if (scroll) {
+      const st = sc.getBoundingClientRect(), tt = t.getBoundingClientRect();
+      const after = Math.max(0, sc.scrollHeight - (tt.bottom - st.top + sc.scrollTop) - (t.scrollHeight - t.clientHeight));
+      const room = Math.max(sc.clientHeight - (tt.top - st.top) - Math.min(after, 160) - 4, touch() ? 300 : 240);
+      t.style.maxHeight = Math.floor(room) + 'px'; s.pages = 1; s.page = 0;
+      t.style.setProperty('--fit-hh', [...t.querySelectorAll(':scope > thead > tr')].reduce((a, r) => a + r.offsetHeight, 0) + 'px');
+      if (newKey) newKey.scrollIntoView({ block: 'nearest' });
+      pager(t, s, [rows], rows.length, cinfo, body.some(isGrp));
+      return;
+    }
+    if (t.style.maxHeight) t.style.maxHeight = '';
     if (newKey) { const p = pages.findIndex(pg => pg.includes(newKey)); if (p >= 0) s.page = p; }
     if (s.reveal) { const p = pages.findIndex(pg => pg.includes(s.reveal)); if (p >= 0) s.page = p; s.reveal = null; }
     s.page = Math.max(0, Math.min(s.page, pages.length - 1));
@@ -248,7 +299,7 @@ const Fit = (() => {
     if (a === 'prev') s.page--; else if (a === 'next') s.page++; else if (a === 'go') s.page = +el.dataset.fitP;
     else if (a === 'cprev') s.cpage = Math.max(0, s.cpage - 1); else if (a === 'cnext') s.cpage++;
     else if (a === 'all') { s.all = !s.all; s.page = 0; }
-    else if (a === 'fold') [...t.tBodies].forEach(b => [...b.rows].filter(isGrp).forEach(r => s.shut.add(textOf(r))));
+    else if (a === 'fold') [...t.tBodies].forEach(b => [...b.rows].filter(isGrp).forEach(r => s.shut.add(grpKey(r))));
     else if (a === 'unfold') s.shut.clear();
     run(t);
   }
@@ -263,7 +314,7 @@ const Fit = (() => {
       return run(t);
     }
     if (el.classList.contains('fit-g')) {
-      const s = state(t), k = textOf(el.closest('tr')); if (s.shut.has(k)) s.shut.delete(k); else s.shut.add(k);
+      const s = state(t), k = grpKey(el.closest('tr')); if (s.shut.has(k)) s.shut.delete(k); else s.shut.add(k);
       return run(t);
     }
     act(t, el.dataset.fitAct, el);
@@ -272,7 +323,7 @@ const Fit = (() => {
   function reveal(tr) {
     const t = tr && tr.closest('table.fit'); if (!t) return false;
     const s = state(t);
-    if (tr.classList.contains('fit-gc')) { let p = tr.previousElementSibling; while (p && !isGrp(p)) p = p.previousElementSibling; if (p) s.shut.delete(textOf(p)); }
+    if (tr.classList.contains('fit-gc')) { let p = tr.previousElementSibling; while (p && !isGrp(p)) p = p.previousElementSibling; if (p) s.shut.delete(grpKey(p)); }
     s.reveal = tr; run(t); return true;
   }
   /* an item of a paged list */
@@ -331,9 +382,12 @@ const Fit = (() => {
     const s = lstate(c), kids = items(c);
     kids.forEach(x => x.classList.remove('fit-off'));
     let lp = c.querySelector(':scope > .fit-lp');
+    if (c._fitMH) { c.style.maxHeight = ''; c._fitMH = false; c.classList.remove('fit-lscroll'); }
     const self = /(auto|scroll)/.test(getComputedStyle(c).overflowY), sc = self ? c : scroller(c);
+    /* scroll mode: a pane that scrolls by itself needs no pages */
+    if (self && scrollMode() && !s.all) return lpager(c, lp, s, 1, kids.length);
     const shown = kids.filter(x => x.offsetParent || getComputedStyle(x).display !== 'none');
-    if (!sc || s.all || shown.length < 4) return lpager(c, lp, s, 1, shown.length);
+    if (!sc || s.all || shown.length < 2) return lpager(c, lp, s, 1, shown.length);
     const pagerH = touch() ? 50 : 40;
     let avail;
     if (self) { const cs = getComputedStyle(c); avail = c.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - pagerH - 12; }
@@ -341,7 +395,7 @@ const Fit = (() => {
       const st = sc.getBoundingClientRect(), top = c.getBoundingClientRect().top - st.top + sc.scrollTop;
       const below = parseFloat(getComputedStyle(c).paddingBottom) + 14;
       const after = Math.max(0, sc.scrollHeight - (c.getBoundingClientRect().bottom - st.top + sc.scrollTop));
-      avail = Math.max(sc.clientHeight - top - pagerH - Math.max(below, Math.min(after, 160)), 220);
+      avail = Math.max(sc.clientHeight - top - pagerH - Math.max(below, Math.min(after, 260)), 220);
     }
     if (lp) lp.hidden = true;
     const first = shown[0].offsetTop, last = shown[shown.length - 1], end = last.offsetTop + last.offsetHeight - first;
@@ -351,6 +405,12 @@ const Fit = (() => {
     const pages = []; let cur = [], start = null;
     rows.forEach(r => { if (cur.length && r.bottom - start > avail) { pages.push(cur); cur = []; start = null; } if (start == null) start = r.top; cur.push(...r.items); });
     if (cur.length) pages.push(cur);
+    /* scroll mode: a long list becomes a box the height of the space left, scrolled by touch */
+    if (scrollMode() && pages.length >= LONG) {
+      c.style.maxHeight = Math.floor(avail + pagerH) + 'px'; c._fitMH = true; c.classList.add('fit-lscroll'); s.pages = 1;
+      if (s.reveal) { const r = s.reveal; s.reveal = null; r.scrollIntoView({ block: 'nearest' }); }
+      return lpager(c, lp, s, 1, shown.length);
+    }
     /* a list that marks its current item (.on) opens on that page when it changes */
     const on = shown.find(x => x.classList.contains('on') || x.classList.contains('sel') || x.contains(document.activeElement));
     const onKey = on ? (on.dataset.key || shown.indexOf(on)) : null;
@@ -389,18 +449,24 @@ const Fit = (() => {
      fold setting, which you set with the header, is left alone). Opening one folds another instead. */
   function onPanelClick(e) {
     const b = e.target.closest && e.target.closest('.ld-pt'), p = b && b.closest('.ld-panel.fit-folded'); if (!p) return;
-    e.preventDefault(); e.stopPropagation(); openedKey.set(p.dataset.key, ++tick); run();
+    e.preventDefault(); e.stopPropagation(); openedKey.set(p.dataset.key, ++tick); refoldNow = true; run();
   }
   function panels(c) {
     const sc = scroller(c); if (!sc) return;
     const all = [...c.querySelectorAll('.ld-panel.open')].filter(p => p.querySelector(':scope > .ld-ph .ld-pt'));
+    const scope = location.hash.split('?')[0] + '|P', sig = all.map(p => p.dataset.key).join(','), m = memo(scope, sig);
+    const tell = () => all.forEach(p => p.querySelector(':scope > .ld-ph .ld-pt').setAttribute('aria-expanded', String(!p.classList.contains('fit-folded'))));
+    if (m) { all.forEach(p => p.classList.toggle('fit-folded', m.shut.has(p.dataset.key))); return tell(); }
     all.forEach(p => p.classList.remove('fit-folded'));
+    try { panelsFit(all, sc); } finally { MEM.set(scope, { sig, shut: new Set(all.filter(p => p.classList.contains('fit-folded')).map(p => p.dataset.key)) }); tell(); }
+  }
+  function panelsFit(all, sc) {
     const over = () => sc.scrollHeight > sc.clientHeight + 1;
-    if (!over() || all.length < 2) return;
+    if (!over() || !all.length) return;
     const bottom = () => sc.getBoundingClientRect().bottom;
     for (let i = 0; i < all.length && over(); i++) {
       const open = all.filter(p => !p.classList.contains('fit-folded'));
-      if (open.length < 2) break;
+      if (!open.length) break;
       /* the panels hanging off the bottom go first; the one you opened last goes last */
       const keep = Math.max(...open.map(p => openedKey.get(p.dataset.key) || 0)), mine = p => !!keep && (openedKey.get(p.dataset.key) || 0) === keep;
       const rest = open.filter(p => !mine(p)), past = rest.filter(p => p.getBoundingClientRect().bottom > bottom() + 1);
@@ -428,57 +494,81 @@ const Fit = (() => {
   function folds() {
     const byParent = new Map();
     document.querySelectorAll(FOLDS).forEach(c => { if (!c.closest('#app') || !c.firstElementChild) return; const p = c.parentElement; if (!byParent.has(p)) byParent.set(p, []); byParent.get(p).push(c); });
+    let pi = 0;
     byParent.forEach((cards, parent) => {
+      const scope = location.hash.split('?')[0] + '|F' + (pi++), sig = cards.map(foldKey).join(','), m = memo(scope, sig);
+      if (m) { cards.forEach(c => { c.classList.remove('fit-off'); c.classList.toggle('fit-shut', m.shut.has(foldKey(c))); }); return; }
+      const save = () => MEM.set(scope, { sig, shut: new Set(cards.filter(c => c.classList.contains('fit-shut')).map(foldKey)) });
       cards.forEach(c => c.classList.remove('fit-shut', 'fit-off'));          /* measured with every card in view; paging comes after */
-      const sc = scroller(parent); if (!sc || cards.length < 2) return;
+      const sc = scroller(parent); if (!sc || cards.length < 2) return save();
       const over = () => sc.scrollHeight > sc.clientHeight + 1;
-      if (!over()) return;
+      if (!over()) return save();
       const t = c => (c.contains(document.activeElement) ? 1e9 : 0) + (FO.get(foldKey(c)) || 0);
       const order = cards.slice().sort((a, b) => t(a) - t(b) || cards.indexOf(b) - cards.indexOf(a));
       /* fold everything but the one in use, then open from the top while they fit */
       order.slice(0, -1).forEach(c => c.classList.add('fit-shut'));
-      if (!over()) for (const c of cards) { if (!c.classList.contains('fit-shut')) continue; c.classList.remove('fit-shut'); if (over()) { c.classList.add('fit-shut'); break; } }
+      if (!over()) for (const c of cards) { if (!c.classList.contains('fit-shut')) continue; c.classList.remove('fit-shut'); if (over()) c.classList.add('fit-shut'); }
+      save();
     });
+    byParent.forEach(cards => cards.forEach(markFold));
+  }
+  /* a folded card's header line opens it from the keyboard too */
+  const FOCUSABLE = 'input, textarea, select, button, a[href], [tabindex]';
+  function markFold(c) {
+    const hd = c.firstElementChild, shut = c.classList.contains('fit-shut');
+    if (shut && !hd.matches(FOCUSABLE)) { hd.tabIndex = 0; hd.setAttribute('role', 'button'); hd.setAttribute('aria-expanded', 'false'); hd.dataset.fitHd = '1'; }
+    else if (!shut && hd.dataset.fitHd) { hd.removeAttribute('tabindex'); hd.removeAttribute('role'); hd.removeAttribute('aria-expanded'); delete hd.dataset.fitHd; }
   }
   function onFoldClick(e) {
     const c = e.target.closest && e.target.closest('.fit-shut'); if (!c || !c.matches(FOLDS)) return false;
     if (e.target.closest('input, textarea, select, button, a, label')) return false;
     if (!c.firstElementChild.contains(e.target)) return false;
-    FO.set(foldKey(c), ++tick); e.preventDefault(); run(); return true;
+    FO.set(foldKey(c), ++tick); refoldNow = true; e.preventDefault(); run(); return true;
   }
 
   /* ---------- documents in sections (the call sheet): a heading folds its section; when the page
      would overflow, the biggest sections you haven't opened yourself fold first ---------- */
-  const SECTIONED = '.cs, [data-fit-sections]', SEC = new Map();
+  const SECTIONED = '.cs, [data-fit-sections]', SEC = new Map(), SECT = new Map();
   function sections(doc) {
     const heads = [...doc.children].filter(x => x.tagName === 'H4' || x.matches('[data-fit-sec]'));
     if (heads.length < 2) return;
     doc.classList.add('fit-secs');
     const key = h => location.hash.split('?')[0] + '|' + textOf(h);
     const parts = heads.map(hd => { const body = []; for (let n = hd.nextElementSibling; n && !heads.includes(n); n = n.nextElementSibling) body.push(n); return { hd, body, k: key(hd) }; });
-    parts.forEach(p => { p.hd.classList.add('fit-sec'); p.hd.tabIndex = 0; p.hd.setAttribute('role', 'button'); p.body.forEach(b => b.classList.remove('fit-off')); });
+    /* a heading's look follows its section at every step, so what is measured is what is shown
+       (a folded heading is a compact chip with a count) */
+    const rowsOf = p => p.body.reduce((a, b) => a + (b.querySelectorAll ? b.querySelectorAll('tbody tr:not(.fit-csp)').length : 0), 0);
+    const fold = (p, shut) => {
+      p.body.forEach(b => b.classList.toggle('fit-off', shut));
+      shut = shut && p.body.length > 0;
+      p.hd.classList.toggle('shut', shut); p.hd.setAttribute('aria-expanded', shut ? 'false' : 'true');
+      p.hd.dataset.n = shut ? (rowsOf(p) || '') : '';
+    };
+    parts.forEach(p => { p.hd.classList.add('fit-sec'); p.hd.tabIndex = 0; p.hd.setAttribute('role', 'button'); });
     const want = p => SEC.get(p.k);                        // true = you opened it, false = you folded it
-    parts.forEach(p => { if (want(p) === false) p.body.forEach(b => b.classList.add('fit-off')); });
+    const scope = location.hash.split('?')[0] + '|S' + [...document.querySelectorAll(SECTIONED)].indexOf(doc), sig = parts.map(p => p.k).join(','), m = memo(scope, sig);
+    if (m) { parts.forEach(p => fold(p, m.shut.has(p.k))); return; }
+    parts.forEach(p => fold(p, want(p) === false));
     const sc = scroller(doc);
-    if (sc) {
-      const over = () => sc.scrollHeight > sc.clientHeight + 1;
-      /* fold every section you haven't chosen, then open the smallest ones again while they fit */
-      const size = p => p.body.reduce((x, e) => x + e.offsetHeight, 0);
-      const auto = parts.filter(p => want(p) === undefined).map(p => [p, size(p)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
-      if (over()) {
-        auto.forEach(p => p.body.forEach(b => b.classList.add('fit-off')));
-        for (const p of auto) { p.body.forEach(b => b.classList.remove('fit-off')); if (over()) p.body.forEach(b => b.classList.add('fit-off')); }
-      }
-      const mine = parts.filter(p => want(p) === true).sort((a, b) => (a.t || 0) - (b.t || 0)).slice(0, -1);
-      for (const p of mine) { if (!over()) break; p.body.forEach(b => b.classList.add('fit-off')); }
-      sectionRows(parts, sc, over);
+    const save = () => MEM.set(scope, { sig, shut: new Set(parts.filter(p => p.hd.classList.contains('shut')).map(p => p.k)) });
+    if (!sc) return save();
+    const over = () => sc.scrollHeight > sc.clientHeight + 1;
+    /* fold every section you haven't chosen, then open the smallest ones again while they fit */
+    const size = p => p.body.reduce((x, e) => x + e.offsetHeight, 0);
+    const auto = parts.filter(p => want(p) === undefined).map(p => [p, size(p)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+    if (over()) {
+      auto.forEach(p => fold(p, true));
+      for (const p of auto) { fold(p, false); if (over()) fold(p, true); }
     }
-    parts.forEach(p => { const shut = p.body.length && p.body.every(b => b.classList.contains('fit-off')); p.hd.classList.toggle('shut', shut); p.hd.setAttribute('aria-expanded', shut ? 'false' : 'true');
-      p.hd.dataset.n = shut ? (p.body.reduce((a, b) => a + (b.querySelectorAll ? b.querySelectorAll('tbody tr').length : 0), 0) || '') : ''; });
+    /* still too tall: the sections you opened longest ago fold, the newest stays open */
+    const mine = parts.filter(p => want(p) === true).sort((a, b) => (SECT.get(a.k) || 0) - (SECT.get(b.k) || 0)).slice(0, -1);
+    for (const p of mine) { if (!over()) break; fold(p, true); }
+    save();
+    sectionRows(parts, sc, over);
   }
   /* an open section whose table is still taller than the screen shows its rows a page at a time
      (a document like the call sheet keeps its plain tables; printing shows every row) */
-  const CSP = new Map();
+  const CSP = new Map(), CSPER = new Map();
   function sectionRows(parts, sc, over) {
     const open = parts.filter(p => p.body.length && !p.body.every(b => b.classList.contains('fit-off')));
     const tabs = open.flatMap(p => p.body.filter(b => b.tagName === 'TABLE' && b.tBodies[0]).map(t => ({ p, t })));
@@ -491,6 +581,9 @@ const Fit = (() => {
       let room = hs.reduce((a, b) => a + b, 0) - excess, per = 0;
       for (const hh of hs) { if (room - hh < 0) break; room -= hh; per++; }
       per = Math.max(2, Math.min(per, rows.length - 1));
+      /* keep the page size while the screen and the row count stay the same, so every page holds as many rows */
+      const kept = CSPER.get(p.k), sig = sc.clientHeight + 'x' + sc.clientWidth + ':' + rows.length;
+      if (kept && kept.sig === sig) per = kept.per; else CSPER.set(p.k, { per, sig });
       const pages = Math.ceil(rows.length / per), pg = Math.max(0, Math.min(CSP.get(p.k) || 0, pages - 1)); CSP.set(p.k, pg);
       rows.forEach((r, i) => r.classList.toggle('fit-rowoff', i < pg * per || i >= (pg + 1) * per));
       const cols = Math.max(...[...t.rows].map(r => [...r.cells].reduce((a, c) => a + (c.colSpan || 1), 0)));
@@ -523,7 +616,7 @@ const Fit = (() => {
     if (e.target.closest('input, textarea, select, button, a')) return false;
     const k = location.hash.split('?')[0] + '|' + textOf(hd), open = hd.classList.contains('shut');
     /* opening one you didn't open before folds the rest you haven't chosen, oldest first, as needed */
-    SEC.set(k, open); e.preventDefault(); run(); return true;
+    SEC.set(k, open); if (open) SECT.set(k, ++tick); refoldNow = true; e.preventDefault(); run(); return true;
   }
 
   /* ---------- scroll hints ---------- */
@@ -535,7 +628,7 @@ const Fit = (() => {
     if ((el.dataset.sh || '') !== v) { if (v) el.dataset.sh = v; else delete el.dataset.sh; }
   }
   const SCROLLERS = '#main, #rail, .modal-b, .menu, .suggest, .navlist, .navp, .script-scroll, .bd-scenes, .bd-center, .bd-right, .sched-days, .sched-pool .zone, .shots-main, .shots-side, .stage-side, .stage-main, .stage-right, .ct-list, .scroll, .lined-scroll, .sbs-side, .fin-cols > *, [data-scroll]';
-  function hints() { document.querySelectorAll(SCROLLERS).forEach(hint); }
+  function hints() { document.querySelectorAll(SCROLLERS + ', table.fit-scroll, .fit-lscroll').forEach(hint); }
   function onScroll(e) { const el = e.target; if (el && el.nodeType === 1) hint(el); }
 
   /* ---------- toolbars: when the buttons wrap onto a second line, their labels fold into icons ---------- */
@@ -561,7 +654,17 @@ const Fit = (() => {
   function run(only) {
     busy = true;
     try { if (!only) { try { folds(); } catch (err) { console.error('fit', err); } } (only ? [only] : tables()).forEach(t => { try { apply(t); } catch (err) { console.error('fit', err); } }); if (!only) { [...lists(), ...autoLists()].forEach(c => { try { list(c); } catch (err) { console.error('fit', err); } }); document.querySelectorAll('[data-fit-accordion], #main .live.ld').forEach(accordion); [...document.querySelectorAll(SECTIONED), ...autoSections()].forEach(d => { try { sections(d); } catch (err) { console.error('fit', err); } }); document.querySelectorAll('#app .toolbar, #app .page-h').forEach(toolbar); rail(); } hints(); }
-    finally { if (mo) mo.takeRecords(); busy = false; }
+    finally { if (mo) mo.takeRecords(); busy = false; refoldNow = false; }
+    watchView();
+  }
+  /* the screen's content changing size (a late image, a panel drawn a moment after the rest) means
+     the fit may be stale: look again — at most a few times a second, so a fit can never loop */
+  let viewRO = null, viewRoot = null, roT = 0, roN = 0;
+  function watchView() {
+    const root = document.querySelector('#main > *'); if (!root || root === viewRoot || typeof ResizeObserver === 'undefined') return;
+    if (!viewRO) viewRO = new ResizeObserver(() => { const now = Date.now(); if (now - roT > 1000) { roT = now; roN = 0; } if (++roN > 3) return; soon(); });
+    if (viewRoot) viewRO.unobserve(viewRoot);
+    viewRO.observe(root); viewRoot = root;
   }
   const soon = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; run(); }); };
   function init() {
@@ -572,21 +675,26 @@ const Fit = (() => {
       run();
     });
     mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'open'] });
-    new ResizeObserver(soon).observe(document.documentElement);
-    addEventListener('resize', soon);
+    const resized = () => { settle(600); soon(); };
+    new ResizeObserver(resized).observe(document.documentElement);
+    addEventListener('resize', resized);
     /* a new screen settles (images, fonts, late panels) a moment after it draws: look once more */
-    addEventListener('hashchange', () => setTimeout(soon, 300));
+    addEventListener('hashchange', () => { settle(1500); setTimeout(soon, 300); });
     document.addEventListener('click', onClick, true);
     document.addEventListener('focusin', onFocus);
     document.addEventListener('toggle', onToggle, true);
     document.addEventListener('click', onPanelClick, true);
     document.addEventListener('click', onCspClick, true);
-    document.addEventListener('keydown', e => { if (e.target.classList && e.target.classList.contains('fit-sec')) onSecClick(e); });
+    document.addEventListener('keydown', e => {
+      if (!e.target.classList) return;
+      if (e.target.classList.contains('fit-sec')) onSecClick(e);
+      else if (e.target.dataset.fitHd && (e.key === 'Enter' || e.key === ' ')) onFoldClick(e);
+    });
     document.addEventListener('scroll', onScroll, true);
     document.addEventListener('touchstart', onTouchStart, { passive: true });
     document.addEventListener('touchend', onTouchEnd, { passive: true });
-    if (document.fonts) document.fonts.ready.then(() => { tables().forEach(t => { state(t).sig = ''; }); soon(); });
-    run();
+    if (document.fonts) document.fonts.ready.then(() => { tables().forEach(t => { state(t).sig = ''; }); settle(600); soon(); });
+    settle(1500); run();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
   return { run, reveal, state };

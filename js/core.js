@@ -674,8 +674,12 @@ const Device = {
     const r = document.documentElement, p = Device.profile();
     if (Device.touchOn()) r.dataset.touch = '1'; else delete r.dataset.touch;
     r.dataset.form = Device.form(); if (p === 'auto') delete r.dataset.device; else r.dataset.device = p;
+    r.dataset.lists = Device.lists();
   },
   setMode(m) { try { localStorage.setItem('sb-touch', m); } catch (e) { } Device.apply(); },
+  /* long tables and lists: 'scroll' (by touch or wheel, no bar, faded edges) or 'page' (‹ › pages that fit) */
+  lists() { try { return localStorage.getItem('sb-lists') === 'page' ? 'page' : 'scroll'; } catch (e) { return 'scroll'; } },
+  setLists(m) { try { localStorage.setItem('sb-lists', m === 'page' ? 'page' : 'scroll'); } catch (e) { } Device.apply(); },
   secure: () => window.isSecureContext,
   installed: () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true,
   init() {

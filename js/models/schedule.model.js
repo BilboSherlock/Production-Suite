@@ -51,6 +51,12 @@ const ScheduleModel = {
     return localISODate(d);
   },
   /** the strip colour class: INT/EXT × day/night */
+  /** the strip's short INT/EXT · time label: standard abbreviations, never a word cut in half; a stage scene has no INT/EXT */
+  stripLabel(s) {
+    const T = { MORNING: 'MORN', AFTERNOON: 'AFTN', EVENING: 'EVE', CONTINUOUS: 'CONT', 'MOMENTS LATER': 'LATER', 'THE SAME': 'SAME', 'SAME TIME': 'SAME', 'MAGIC HOUR': 'MAGIC', SUNRISE: 'DAWN', SUNSET: 'DUSK', MIDNIGHT: 'NIGHT' };
+    const t = String(s.tod || '').trim().toUpperCase(), tod = T[t] || (t.length <= 6 ? t : t.split(/\s+/)[0].slice(0, 6));
+    return [s.ioe, tod].filter(Boolean).join('·') || '—';
+  },
   stripClass(s) { if (!s.ioe) return 's-x'; const ext = /^(EXT|EST)/.test(s.ioe); return `s-${ext ? 'ext' : 'int'}-${s.night ? 'night' : 'day'}`; },
 
   /* ---------- queries ---------- */

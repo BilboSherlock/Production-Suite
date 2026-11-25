@@ -64,4 +64,6 @@ class DeviceVM extends ViewModel {
   inUse(w, h) { return `In use now: ${this._dev.form() === 'tablet' ? 'tablet' : 'desktop'} layout · ${w} × ${h} layout pixels · ${this._dev.touchOn() ? 'touch' : 'pointer'} controls`; }
   setProfile(k) { this._dev.setProfile(k); this.notify(); }
   setMode(k) { this._dev.setMode(k); this.notify(); }
+  get lists() { return this._dev.lists ? this._dev.lists() : 'scroll'; }
+  setLists(k) { if (this._dev.setLists) this._dev.setLists(k); this.notify(); }
 }

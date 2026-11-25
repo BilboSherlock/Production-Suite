@@ -12,6 +12,10 @@
   --fade: 26px;
 }
 html[data-touch] { --nav-h: 42px; --pad: 14px; }
+/* type scale: one set of sizes the whole app draws from. A touch screen is read at arm's length,
+   so every step is a size larger there. */
+:root { --fs-xs: 11px; --fs-s: 12px; --fs-m: 13px; --fs-b: 14.5px; --tap: 32px; }
+html[data-touch] { --fs-xs: 12px; --fs-s: 13px; --fs-m: 14px; --fs-b: 15px; --tap: 44px; }
 
 /* ---------- the shell fills the screen exactly, between the system bars ---------- */
 html, body { height: 100%; overflow: hidden; }
@@ -141,10 +145,10 @@ table.tbl.fit tr.fit-pg:hover td { background: var(--surface2); }
 .fit-pt { border: 0; background: transparent; color: var(--accent); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 5px 8px; border-radius: 3px; }
 .fit-pt:hover { background: var(--accent-soft); }
 html[data-touch] .fit-pager { min-height: 48px; gap: 8px; }
-html[data-touch] .fit-pb { width: 42px; height: 38px; }
+html[data-touch] .fit-pb { width: 42px; height: 36px; }
 html[data-touch] .fit-dot { width: 11px; height: 11px; }
 html[data-touch] .fit-dots { gap: 9px; }
-html[data-touch] .fit-pt { padding: 9px 12px; font-size: 13.5px; }
+html[data-touch] .fit-pt { padding: 0 12px; height: 36px; font-size: 13.5px; }
 /* measuring (fit.js, for a moment): the table as the browser would lay it out at its widest */
 table.tbl.fit-measure { display: table !important; width: max-content !important; min-width: 0 !important; max-width: none !important; table-layout: auto !important; position: absolute !important; visibility: hidden; left: 0; top: 0; }
 table.tbl.fit-measure > thead { display: table-header-group !important; } table.tbl.fit-measure > tbody { display: table-row-group !important; } table.tbl.fit-measure > tfoot { display: none !important; }
@@ -176,7 +180,7 @@ table.tbl.rep { font-size: 14px; line-height: 1.45; }
 .fit-lp { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; padding: 5px 6px; font-size: 13px; color: var(--muted); min-height: 38px; border-top: 1px solid var(--border); margin-top: auto; flex: none; }
 .fit-lp[hidden] { display: none; }
 .fit-lp b { color: var(--text); font-weight: 650; }
-html[data-touch] .fit-lp { min-height: 48px; gap: 8px; }
+html[data-touch] .fit-lp { min-height: var(--tap); gap: 8px; padding-block: 4px; }   /* its buttons reach 44px through their touch areas */
 .navlist .fit-lp, .kbody .fit-lp { position: sticky; bottom: 0; background: inherit; }
 .navlist { display: flex; flex-direction: column; }
 
@@ -239,7 +243,7 @@ html[data-touch] .strip { padding: 7px 10px; }
 /* ---------- overview: every number in one row, the rest in view ---------- */
 .tiles { grid-template-columns: repeat(auto-fit, minmax(124px, 1fr)); gap: 8px; margin-bottom: 12px; }
 .tile { padding: 9px 11px; gap: 1px; min-width: 0; }
-.tile .tl { font-size: 10px; }
+.tile .tl { font-size: 11px; }
 .tile b { font-size: 21px; }
 .tile .ts { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
 .ov-cols { gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
@@ -310,12 +314,12 @@ html[data-touch] .cs h4.fit-sec { padding-top: 8px; padding-bottom: 8px; }
 h3.fit-sec, h4.fit-sec { padding: 4px 0; }
 h3.fit-sec.shut::after, h4.fit-sec.shut::after { color: var(--muted); font-size: 12px; }
 
-/* ---------- photo shot list: three cards a row on a landscape tablet ---------- */
+/* ---------- photo shot list: compact cards (two a row, so titles and fields stay readable) ---------- */
 @media (min-width: 1100px) {
-  .ps-grid { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
+  .ps-grid { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 10px; }
   .ps-card { gap: 10px; padding: 8px; }
   .ps-ref { width: 76px; height: 96px; }
-  .ps-fields { row-gap: 4px; margin-top: 4px; }
+  .ps-fields { row-gap: 4px; margin-top: 4px; grid-template-columns: 1fr 1fr; }
   .ps-main > :nth-child(2), .ps-main > :nth-child(4) { margin-top: 4px !important; }
   .ps-status { width: 104px; }
   /* the tag bar and the filters share one line */
@@ -323,7 +327,9 @@ h3.fit-sec.shut::after, h4.fit-sec.shut::after { color: var(--muted); font-size:
   .page:has(> .ps-stats) > * { grid-column: 1 / -1; min-width: 0; }
   .page:has(> .ps-stats) > .ps-stats + div { grid-column: 1; align-self: center; margin: 0 !important; }
   .page:has(> .ps-stats) > .ps-stats + div + .row { grid-column: 2; margin: 0 !important; }
-  .ps-group > .row:first-child { margin: 10px 0 6px !important; }
+  .ps-group > .row:first-child { margin: 6px 0 4px !important; }
+  .ps-stats { margin: 2px 0 4px !important; }
+  .ps-group.fit-shut > .row:first-child { margin: 4px 0 !important; }
 }
 
 /* ---------- live desk columns: folded panels pair up as tiles ---------- */
@@ -332,7 +338,7 @@ h3.fit-sec.shut::after, h4.fit-sec.shut::after { color: var(--muted); font-size:
 :is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) { grid-column: auto; }
 :is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) > .ld-ph { min-height: 0; padding-block: 0; }
 :is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) .ld-pt { min-height: 42px; padding-block: 4px; }
-:is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) .ld-ph h3 { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) .ld-ph h3 { font-size: 13px; line-height: 1.15; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
 :is(.ld-side, .ld-main) > .ld-panel:is(.fit-folded, :not(.open)) .ld-pt { min-width: 0; flex: 1; }
 .ld-side > .ld-panel:is(.fit-folded, :not(.open)) .ld-pt > .ico { display: none; }
 .ld-side > .ld-panel:is(.fit-folded, :not(.open)) :is(.ld-hint, .ld-tools) { display: none; }
@@ -377,3 +383,58 @@ tr.fit-csp button:disabled { opacity: .3; cursor: default; }
   .fit-sec::before, .fit-sec::after { display: none !important; }
 }
 
+
+/* ---------- usability: rail links fill the rail's width, so the whole row is the tap target ---------- */
+#rail .nav-a { align-self: stretch; }
+
+/* pager dots: a small dot inside a finger-sized target */
+/* links and chips drawn as pills are tappable on a touch screen */
+html[data-touch] :is(a.pill, button.pill) { display: inline-flex; align-items: center; min-height: 32px; padding-inline: 10px; }
+/* live desk: a tile's main figure is never cut off — the tile widens, and its note wraps to two lines */
+.ld-head > .ld-tile { min-width: min-content; }
+.ld-head > .ld-clock { flex: 0 0 auto; min-width: max-content; }
+.ld-head .ld-s { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+/* readability floor for small labels on a tablet */
+html[data-touch] #rail .nav-label, html[data-touch] .fl-auto, html[data-touch] .ld-sev { font-size: 11px; }
+
+/* ---------- schedule: in the narrow unscheduled pool a strip takes two lines, so the scene title is never squeezed ---------- */
+.sched-pool .strip { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "sn ie . pg more" "sn st st st st"; column-gap: 8px; row-gap: 2px; align-items: center; }
+.sched-pool .strip .sn { grid-area: sn; align-self: start; }
+.sched-pool .strip .ie { grid-area: ie; min-width: 0; }
+.sched-pool .strip .st { grid-area: st; }
+.sched-pool .strip .pg { grid-area: pg; }
+.sched-pool .strip .strip-more { grid-area: more; }
+/* the project title in the top bar is as wide as its name (up to a limit), so a long name isn't cut off when there's room */
+#topbar .ptitle { width: auto; field-sizing: content; min-width: 120px; max-width: min(600px, 46vw); flex: 0 1 auto; text-overflow: ellipsis; }
+/* check-in: a person's role and call time wrap rather than lose the time */
+.ld-people .ld-meta.clip { white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* ---------- the type scale applied (labels in capitals, metadata, small text and buttons) ---------- */
+html[data-touch] :is(.tbl th, label.lbl, .pill, .tile .tl, .hub-name, .fin-kpi .fk-l, .ld-l, .ld-sev, .fl-auto, .chip-n, .ld-count, #rail .nav-label, .strip .ie, .strip .ptag) { font-size: var(--fs-xs); letter-spacing: .06em; }
+html[data-touch] :is(.ts, .chip-sub, .navlist .np, .ld-s, .el-vars, .fin-leg, .fin-kpi .fk-s, .strip .pg, .strip .st span, .ld-meta, .bd-notes-tabs button, .fit-lp .fit-pi, .fit-pager .fit-pi) { font-size: var(--fs-s); }
+html[data-touch] :is(.small, .btn, .btn.sm, .hub-tab, .chip, .seg button, .tabs button, .fit-pt, .muted.small) { font-size: var(--fs-m); }
+html[data-touch] :is(.tbl td, .strip) { font-size: var(--fs-b); }
+
+/* ---------- scroll mode: long tables and lists scroll inside the screen (no bar, faded edges) ---------- */
+table.tbl.fit.fit-scroll { overflow-y: auto; overscroll-behavior: contain; align-content: start; border-bottom: 1px solid var(--border); }
+table.tbl.fit.fit-scroll > thead > tr { position: sticky; top: 0; z-index: 3; background: var(--surface2); }
+table.tbl.fit.fit-scroll > tfoot > tr { position: sticky; bottom: 0; z-index: 3; background: var(--surface2); }
+table.tbl.fit.fit-scroll[data-sh] { --ft: #000; }            /* the sticky header is the top cue: only the bottom edge fades */
+.fit-lscroll { overflow-y: auto !important; overscroll-behavior: contain; align-content: start; }
+table.tbl.fit.fit-scroll > tbody > tr.grp { position: sticky; top: var(--fit-hh, 0px); z-index: 2; }
+table.tbl.fit.fit-scroll > tbody > tr.grp > td { background: var(--surface2); }
+
+/* ---------- touch targets: small controls keep their look but get a finger-sized (44px) touch area ---------- */
+html[data-touch] :is(.castchip > button, .chip > button, button.x, .swatches button, .fit-dot, a.pill, button.pill, .strip .strip-more, .icon-btn, .fit-x, .fit-g, .fit-pb, .fit-pt, tr.fit-csp button, .el-name > a) { position: relative; }
+html[data-touch] :is(.castchip > button, .chip > button, button.x, .swatches button, .fit-dot, a.pill, button.pill, .strip .strip-more, .icon-btn, .fit-x, .fit-g, .fit-pb, .fit-pt, tr.fit-csp button, .el-name > a)::after {
+  content: ''; position: absolute; top: min(0px, calc((100% - var(--tap)) / 2)); bottom: min(0px, calc((100% - var(--tap)) / 2));
+  left: min(0px, calc((100% - var(--tap)) / 2)); right: min(0px, calc((100% - var(--tap)) / 2)); }
+html[data-touch] .fit-dots { gap: 8px; }
+html[data-touch] .fit-dot { width: 12px; height: 12px; }
+
+/* ---------- portrait fixes ---------- */
+/* the script excerpt keeps its own proportions: the full-page screenplay widths (inches) don't apply */
+.mini .t-dialogue, .mini .t-paren, .mini .t-transition { width: auto; }
+.stage-main { overflow-x: hidden !important; }   /* beats the inline overflow: auto the views set */
+/* the task board goes two-by-two when four columns would not fit side by side */
+@media (max-width: 1100px) { .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
