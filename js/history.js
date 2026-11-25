@@ -68,7 +68,7 @@ function purgeOrphans(P) {
   P.props.concat(P.wardrobe).forEach(x => x.sceneIds = x.sceneIds.filter(ok)); P.tasks.forEach(t => { if (!ok(t.sceneId)) t.sceneId = ''; });
   Object.keys(P.sceneMeta).forEach(k => { if (!ok(k)) delete P.sceneMeta[k]; });
   P.cues.forEach(c => { if (!ok(c.sceneId)) c.sceneId = ''; });
-  if (P.photo) { P.photo.shots = P.photo.shots.filter(t => ok(t.sceneId)); const ps = new Set(P.photo.shots.map(s => s.id)); P.photo.selects.forEach(x => { if (x.shotId && !ps.has(x.shotId)) x.shotId = ''; }); Object.values(P.photo.runs).forEach(rs => rs.forEach(r => { if (r.sceneId && !ok(r.sceneId)) r.sceneId = ''; })); }
+  if (P.photo) { P.photo.shots = P.photo.shots.filter(t => ok(t.sceneId)); SelectsModel.unlinkMissing(P.photo); RunModel.unlinkMissing(P.photo, ok); }
   { const bids = new Set(P.blocks.map(b => b.id)), sids = new Set(P.shots.map(t => t.id)); P.lined = (P.lined || []).filter(l => bids.has(l.from) && bids.has(l.to) && sids.has(l.shotId)); P.takes = (P.takes || []).filter(t => !t.shotId || sids.has(t.shotId)); }
   P.stage.plans.forEach(pl => { if (!ok(pl.sceneId)) pl.sceneId = ''; });
   Store.touch(); return r;
@@ -79,32 +79,11 @@ function sceneDataCount(P, id) {
 }
 
 /* ---------- revisions ---------- */
-const REV_COLORS = [
-  { k: 'white', label: 'White', color: '#ffffff' }, { k: 'blue', label: 'Blue', color: '#cfe3ff' }, { k: 'pink', label: 'Pink', color: '#ffd5e5' },
-  { k: 'yellow', label: 'Yellow', color: '#fff4b3' }, { k: 'green', label: 'Green', color: '#d3f2d0' }, { k: 'goldenrod', label: 'Goldenrod', color: '#f5dd9b' },
-  { k: 'buff', label: 'Buff', color: '#efdcb8' }, { k: 'salmon', label: 'Salmon', color: '#ffd0bd' }, { k: 'cherry', label: 'Cherry', color: '#ffb5bd' },
-];
-const currentRev = P => P.revisions.find(r => r.id === P.settings.rev) || null;
-const revColor = (P, id) => { const r = P.revisions.find(x => x.id === id); return r ? r.color : ''; };
+const { REV_COLORS, currentRev, revColor } = ScriptModel;
 
 /* ---------- locked scene numbers ---------- */
-function lockSceneNumbers(P) { let n = 0; P.blocks.forEach(b => { if (b.type === 'scene') b.num = String(++n); }); P.settings.sceneNumLock = true; }
-function unlockSceneNumbers(P) { P.blocks.forEach(b => { delete b.num; }); P.settings.sceneNumLock = false; }
-function assignNewSceneNumbers(P) {
-  const used = new Set(P.blocks.filter(b => b.type === 'scene' && b.num).map(b => b.num)); let prev = '', changed = false;
-  P.blocks.forEach(b => {
-    if (b.type !== 'scene') return;
-    if (!b.num) {
-      let cand;
-      if (!prev) cand = 'A1';
-      else { const m = /^(.*?)([A-Z]*)$/.exec(prev); let base = m[1], suf = m[2]; if (!suf) suf = 'A'; else suf = nextLetters(suf); cand = base + suf; while (used.has(cand)) { suf = nextLetters(suf); cand = base + suf; } }
-      b.num = cand; used.add(cand); changed = true;
-    }
-    prev = b.num;
-  });
-  return changed;
-}
-function nextLetters(s) { const a = s.split(''); let i = a.length - 1; while (i >= 0) { if (a[i] === 'Z') { a[i] = 'A'; i--; } else { a[i] = String.fromCharCode(a[i].charCodeAt(0) + 1); return a.join(''); } } return 'A' + a.join(''); }
+const lockSceneNumbers = P => ScriptModel.lockNumbers(P), unlockSceneNumbers = P => ScriptModel.unlockNumbers(P);
+const assignNewSceneNumbers = P => ScriptModel.assignNumbers(P), nextLetters = s => ScriptModel.nextLetters(s);
 
 /* ---------- moving a scene (used by script navigator and corkboard) ---------- */
 function moveSceneBlocks(P, srcId, tgtId, after) {

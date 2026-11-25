@@ -31,7 +31,7 @@ const AV_L = new Set(['video', 'super']), AV_R = new Set(['audio', 'sfx']);
 const sceneLetter = k => { let s = ''; while (k > 0) { s = String.fromCharCode(65 + ((k - 1) % 26)) + s; k = Math.floor((k - 1) / 26); } return s; };
 const LPP = { screenplay: 54, stage: 54, av: 54, photo: 54, podcast: 54 };
 const layoutOf = (mode, type) => { const m = LAYOUT[mode] || LAYOUT.screenplay; return m[type] || m[DEFAULT_TYPE[mode] || 'action']; };
-const isDual = b => b.type === 'character' && /\^\s*$/.test(b.text);
+const isDual = b => ScriptModel.isDual(b);
 const cueText = b => b.text.replace(/\s*\^\s*$/, '');
 
 /* ---------- rich text: **bold**  *italic*  _underline_  ---------- */

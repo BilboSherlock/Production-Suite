@@ -1,18 +1,14 @@
 'use strict';
 /* ===================================================================
-   Stage tools — blocking diagrams (with animated frames) and cue sheet
+   Stage tools — blocking diagrams (with animated frames) and cue sheet.
+   VIEW (and the SVG drawing of the diagram). Rules: js/models/stage.model.js;
+   screen state and commands: js/viewmodels/stage.vm.js.
    =================================================================== */
 const SVGNS = 'http://www.w3.org/2000/svg';
 const S = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); kids.flat().forEach(c => c && e.append(c.nodeType ? c : document.createTextNode(c))); return e; };
-const STAGE_COLORS = ['#e5484d', '#2468d8', '#1e8e54', '#e8830c', '#7a45c9', '#d6409f', '#12a594', '#8a6d3b'];
-const KINDS = {
-  actor: { label: 'Actor', w: 24 }, chair: { label: 'Chair' }, table: { label: 'Table' }, sofa: { label: 'Sofa' }, bed: { label: 'Bed' },
-  door: { label: 'Door' }, platform: { label: 'Platform' }, prop: { label: 'Prop' }, text: { label: 'Label' },
-  camera: { label: 'Camera' }, light: { label: 'Light' }, boom: { label: 'Boom mic' },
-  strobe: { label: 'Strobe / head' }, softbox: { label: 'Softbox' }, umbrella: { label: 'Umbrella' }, reflector: { label: 'Reflector' }, backdrop: { label: 'Backdrop' }, flag: { label: 'Flag / V-flat' }, mark: { label: 'Talent mark' },
-};
-const PHOTO_ONLY = new Set(['strobe', 'softbox', 'umbrella', 'reflector', 'backdrop', 'flag', 'mark']), STAGE_ONLY = new Set(['boom', 'platform', 'bed', 'door', 'sofa']);
-const initials = s => (s || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+/* the item kinds, colours and rules live in js/models/stage.model.js; these names are kept for older callers */
+const STAGE_COLORS = StageModel.COLORS, KINDS = StageModel.KINDS, PHOTO_ONLY = StageModel.PHOTO_ONLY, STAGE_ONLY = StageModel.STAGE_ONLY;
+const initials = s => StageModel.initials(s);
 
 function shapeFor(it) {
   const c = it.color || '#8a8f98';
@@ -40,11 +36,7 @@ function shapeFor(it) {
   }
 }
 /* stage dimensions -> drawn deck, grid step and scale */
-function stageDeck(plan) {
-  const w = (plan && +plan.w) || 12, d = (plan && +plan.d) || 8, sc = Math.min(920 / w, 540 / d), W = w * sc, Hh = d * sc;
-  let step = 1; for (const st of [1, 2, 5, 10, 20, 50]) { step = st; if (st * sc >= 34) break; }
-  return { x: 500 - W / 2, y: 24, w: W, h: Hh, s: sc, wU: w, dU: d, unit: (plan && plan.unit) || 'm', step };
-}
+const stageDeck = plan => StageModel.deck(plan);
 function makeStageSvg(interactive, plan) {
   const D = stageDeck(plan), svg = S('svg', { class: 'stage-svg', viewBox: `0 0 1000 ${Math.round(D.y + D.h + 80)}`, role: 'img', 'aria-label': 'Stage plan' });
   svg.deck = D;
@@ -65,197 +57,156 @@ function makeStageSvg(interactive, plan) {
 function applyPos(g, p) { g.style.transform = `translate(${p.x}px, ${p.y}px) rotate(${p.r || 0}deg)`; }
 
 Views.stage = function (root) {
-  const P = Store.P; P.stage.plans = P.stage.plans || [];
-  if (!P.stage.plans.length && !P.cues.length) { /* first run */ }
-  const tab = P.mode === 'photo' ? 'blocking' : UI.stageTab;
-  const wrap = h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } });
-  root.append(wrap); root.parentElement.classList.add('noscroll');
-  wrap.append(h('div', { class: 'toolbar' }, h('div', { class: 'seg' }, (P.mode === 'photo' ? [['blocking', 'Set & lighting diagrams']] : [['blocking', 'Blocking & set plans'], ['cues', 'Cue sheet'], ['calling', TERM.calling]]).map(([k, l]) => h('button', { class: tab === k ? 'on' : '', onclick: () => { UI.stageTab = k; Router.refresh(); } }, l))),
-    h('span', { class: 'small muted' }, tab === 'blocking' ? 'Drag actors, set pieces, cameras and lights on a scaled plan; add frames to choreograph movement, then press Play.' : tab === 'cues' ? 'Lighting, sound, flys and scene changes — pin each one to a line of the script.' : 'The stage manager’s prompt book: your script with every standby and GO in the margin.')));
-  const body = h('div', { style: { flex: 1, minHeight: 0, overflow: 'auto' } }); wrap.append(body);
-  let stopPlay = () => { };
-  (tab === 'cues' ? cues : tab === 'calling' ? calling : blocking)();
+  /* VIEW. Rules: js/models/stage.model.js; screen state and commands: js/viewmodels/stage.vm.js */
+  const vm = new StageVM();
+  const toolbar = h('div', { class: 'toolbar' }), body = h('div', { style: { flex: 1, minHeight: 0, overflow: 'auto' } });
+  root.append(h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } }, toolbar, body)); root.parentElement.classList.add('noscroll');
+  const left = h('div', { class: 'stage-side' }), main = h('div', { class: 'stage-main' }), right = h('div', { class: 'stage-right' }), stageWrap = h('div', { class: 'stage-wrap' }, left, main, right);
+  const mainBar = h('div', { class: 'row wrap' }), mainNote = h('div', { class: 'small muted', style: { textAlign: 'center' } });
+  let shown = null, svg = null, svgKey = '', itemEls = new Map(), playing = null, animT = null;
 
-  /* ---------------- blocking ---------------- */
-  function blocking() {
-    const scenes = getScenes(P);
-    let plan = P.stage.plans.find(p => p.id === UI.planId) || P.stage.plans[0], sel = null, playing = null;
-    const left = h('div', { class: 'stage-side' }), main = h('div', { class: 'stage-main' }), right = h('div', { class: 'stage-right' });
-    body.append(h('div', { class: 'stage-wrap' }, left, main, right)); body.style.overflow = 'hidden';
-    const frame = () => plan.frames[plan.cur];
-    const posText = pos => { const D = stageDeck(plan), x = (pos.x - (D.x + D.w / 2)) / D.s, y = (D.y + D.h - pos.y) / D.s; return `${Math.abs(x).toFixed(1)} ${D.unit} ${x < 0 ? 'stage right' : 'stage left'} of centre · ${y.toFixed(1)} ${D.unit} upstage of the edge`; };
-    function newPlan() {
-      const p = { id: uid(), name: 'Plan ' + (P.stage.plans.length + 1), sceneId: '', items: [], frames: [{ id: uid(), name: 'Opening', notes: '', pos: {} }], cur: 0, snap: true };
-      P.stage.plans.push(p); plan = p; UI.planId = p.id; sel = null; Store.touch(); drawAll();
-    }
-    function addItem(kind, label = '', color) {
-      const it = { id: uid(), kind, label, color: color || (kind === 'actor' ? STAGE_COLORS[plan.items.filter(i => i.kind === 'actor').length % STAGE_COLORS.length] : '#8a8f98') };
-      plan.items.push(it); const n = plan.items.length;
-      plan.frames.forEach(f => f.pos[it.id] = { x: 500 + ((n * 37) % 160) - 80, y: 300 + ((n * 53) % 120) - 60, r: 0 });
-      sel = it.id; Store.touch(); drawAll();
-    }
-    let svg, itemEls = new Map();
-    function buildStage() {
-      svg = makeStageSvg(true, plan); itemEls.clear();
-      plan.items.forEach(it => {
-        const g = S('g', { class: 'item' + (it.id === sel ? ' sel' : ''), style: `--c:${it.color}`, 'data-id': it.id }, shapeFor(it));
-        applyPos(g, frame().pos[it.id] || { x: 500, y: 300 }); itemEls.set(it.id, g); svg.append(g);
-        g.addEventListener('pointerdown', e => {
-          e.preventDefault(); svg.classList.remove('animate'); stopPlayback();
-          sel = it.id; $$('.item', svg).forEach(x => x.classList.toggle('sel', x === g)); drawRight();
-          g.setPointerCapture(e.pointerId);
-          const p0 = toSvg(e), pos = frame().pos[it.id], dx = pos.x - p0.x, dy = pos.y - p0.y;
-          const mv = ev => { const p = toSvg(ev); const D = svg.deck; let x = clamp(p.x + dx, D.x + 6, D.x + D.w - 6), y = clamp(p.y + dy, D.y + 6, D.y + D.h - 6); if (plan.snap) { x = Math.round(x / 10) * 10; y = Math.round(y / 10) * 10; } pos.x = x; pos.y = y; applyPos(g, pos); const rd = $('#posRead'); if (rd) rd.textContent = posText(pos); };
-          const up = () => { g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); Store.touch(); };
-          g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up);
-        });
+  /* ---------------- blocking: the diagram ---------------- */
+  const toSvg = e => { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); };
+  function buildStage(plan) {
+    svg = makeStageSvg(true, plan); itemEls = new Map();
+    plan.items.forEach(it => {
+      const g = S('g', { class: 'item', style: `--c:${it.color}`, 'data-id': it.id }, shapeFor(it));
+      itemEls.set(it.id, g); svg.append(g);
+      g.addEventListener('pointerdown', e => {
+        e.preventDefault(); svg.classList.remove('animate'); stopPlayback();
+        if (vm.sel !== it.id) vm.select(it.id);
+        g.setPointerCapture(e.pointerId);
+        const p0 = toSvg(e), pos = vm.posOf(it.id), dx = pos.x - p0.x, dy = pos.y - p0.y;
+        const mv = ev => { const p = toSvg(ev), np = vm.dragTo(it.id, p.x + dx, p.y + dy); applyPos(g, np); const rd = right.querySelector('#posRead'); if (rd) rd.textContent = vm.posText(np); };
+        const up = () => { g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); vm.drop(); };
+        g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up);
       });
-    }
-    const toSvg = e => { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); };
-    function goFrame(i, animate = true) {
-      plan.cur = clamp(i, 0, plan.frames.length - 1);
-      if (animate) { svg.classList.add('animate'); clearTimeout(goFrame.t); goFrame.t = setTimeout(() => svg.classList.remove('animate'), 1100); }
-      itemEls.forEach((g, id) => applyPos(g, frame().pos[id] || { x: 500, y: 300 }));
-      drawRight(true);
-    }
-    function stopPlayback() { if (playing) { clearInterval(playing); playing = null; const b = $('#playBtn'); if (b) b.lastChild.textContent = 'Play'; } }
-    stopPlay = stopPlayback;
-    function play() {
-      if (playing) return stopPlayback();
-      if (plan.frames.length < 2) return toast('Add a second frame to animate between positions.', true);
-      $('#playBtn').lastChild.textContent = 'Stop'; goFrame(0);
-      playing = setInterval(() => { if (plan.cur >= plan.frames.length - 1) return stopPlayback(); goFrame(plan.cur + 1); }, 1500);
-    }
+    });
+  }
+  /** the same plan and items keep the same drawing, so moving between frames can animate */
+  function syncStage(plan) {
+    const key = JSON.stringify([plan.id, plan.w, plan.d, plan.unit, vm.P.mode, plan.items]);
+    if (key !== svgKey || !svg) { svgKey = key; buildStage(plan); }
+    itemEls.forEach((g, id) => { applyPos(g, vm.posOf(id)); g.classList.toggle('sel', id === vm.sel); });
+    return svg;
+  }
+  function goFrame(i, animate = true) {
+    if (animate && svg) { svg.classList.add('animate'); clearTimeout(animT); animT = setTimeout(() => svg && svg.classList.remove('animate'), 1100); }
+    vm.goFrame(i);
+  }
+  function stopPlayback() { if (!playing) return; clearInterval(playing); playing = null; const b = main.querySelector('#playBtn'); if (b) b.lastChild.textContent = 'Play'; }
+  function play() {
+    if (playing) return stopPlayback();
+    const plan = vm.plan; if (plan.frames.length < 2) return toast('Add a second frame to animate between positions.', true);
+    playing = setInterval(() => { const p = vm.plan; if (!p || p.cur >= p.frames.length - 1) return stopPlayback(); goFrame(p.cur + 1); }, 1500);
+    main.querySelector('#playBtn').lastChild.textContent = 'Stop'; goFrame(0);
+  }
+  function printPlan() {
+    const plan = vm.plan, node = h('div', { class: 'print-doc' }, h('h1', {}, `Blocking — ${plan.name}`), h('div', { class: 'sub' }, vm.P.title));
+    plan.frames.forEach((f, i) => { const sv = makeStageSvg(false, plan); plan.items.forEach(it => { const g = S('g', { class: 'item', style: `--c:${it.color}` }, shapeFor(it)); applyPos(g, f.pos[it.id] || StageModel.CENTRE); sv.append(g); }); sv.style.maxWidth = '100%';
+      node.append(h('div', { style: { pageBreakInside: 'avoid', marginBottom: '14pt' } }, h('h3', {}, `${i + 1}. ${f.name}`), sv, f.notes ? h('p', {}, f.notes) : null)); });
+    printNode(node);
+  }
+  const addKind = async (k, v) => { if (StageModel.ASK_LABEL.has(k)) { const n = await promptBox(`New ${v.label.toLowerCase()}`, k === 'actor' ? 'Actor or character name' : 'Label', ''); if (n === null) return; stopPlayback(); vm.addItem(k, n); } else { stopPlayback(); vm.addItem(k, ''); } };
 
-    function drawLeft() {
-      left.innerHTML = '';
-      left.append(h('div', { class: 'row', style: { marginBottom: '8px' } }, h('h3', { class: 'grow', style: { fontSize: '15px' } }, 'Plans'), h('button', { class: 'btn sm primary', onclick: newPlan }, icon('plus', 13), 'New')));
-      P.stage.plans.forEach(p => left.append(h('div', { class: 'frame-i' + (p === plan ? ' on' : ''), style: { marginBottom: '6px' }, onclick: () => { stopPlayback(); plan = p; UI.planId = p.id; sel = null; drawAll(); } }, h('span', { class: 'grow' }, p.name), h('span', { class: 'small muted' }, p.frames.length + 'f'))));
-      if (!plan) return;
-      left.append(h('div', { class: 'nav-sep' }), h('h3', { style: { fontSize: '13px', textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted)', marginBottom: '8px' } }, 'Add to stage'),
-        h('div', { class: 'palette-g' }, Object.entries(KINDS).filter(([k]) => P.mode === 'photo' ? !STAGE_ONLY.has(k) : !PHOTO_ONLY.has(k)).map(([k, v]) => h('button', { class: 'btn sm', onclick: async () => { if (k === 'actor' || k === 'text' || k === 'prop' || k === 'strobe' || k === 'softbox' || k === 'umbrella' || k === 'reflector' || k === 'flag' || k === 'mark') { const n = await promptBox(`New ${v.label.toLowerCase()}`, k === 'actor' ? 'Actor or character name' : 'Label', ''); if (n === null) return; addItem(k, n); } else addItem(k, ''); } }, icon('plus', 13), v.label))),
-        h('button', { class: 'btn sm', style: { marginTop: '8px', width: '100%' }, onclick: () => { const have = new Set(plan.items.filter(i => i.kind === 'actor').map(i => i.label.toUpperCase())); const sc = scenes.find(s => s.id === plan.sceneId); const names = sc ? [...sc.chars.keys()] : [...allCharacters(P).keys()]; let n = 0; names.forEach(c => { if (!have.has(c)) { const it = { id: uid(), kind: 'actor', label: c, color: STAGE_COLORS[(plan.items.length) % STAGE_COLORS.length] }; plan.items.push(it); plan.frames.forEach(f => f.pos[it.id] = { x: 120 + (n % 8) * 100, y: 500, r: 0 }); n++; } }); Store.touch(); drawAll(); toast(n ? `Added ${n} actor${n > 1 ? 's' : ''} from the script` : 'No new characters to add', !n); } }, icon('wand', 14), 'Actors from script'));
-    }
-    function drawMain() {
-      main.innerHTML = '';
-      if (!plan) { main.append(h('div', { class: 'empty', style: { margin: 'auto' } }, h('h3', {}, 'Plan your blocking'), h('p', { style: { maxWidth: '46ch' } }, 'Lay out actors, furniture and doors on a top-down stage. Add frames to choreograph who moves where, then play it back.'), h('button', { class: 'btn primary', onclick: newPlan }, icon('plus', 15), 'Create first plan'))); return; }
-      buildStage();
-      const nameIn = h('input', { class: 'inp', value: plan.name, style: { maxWidth: '280px', fontWeight: 650 }, oninput: e => { plan.name = e.target.value; Store.touch(); drawLeftLight(); } });
-      const scSel = h('select', { class: 'inp', style: { maxWidth: '280px' }, onchange: e => { plan.sceneId = e.target.value; Store.touch(); } }, h('option', { value: '' }, 'Scene: any'), scenes.map(s => h('option', { value: s.id, selected: s.id === plan.sceneId }, `${s.num}. ${s.label}`.slice(0, 50))));
-      main.append(h('div', { class: 'row wrap' }, nameIn, scSel, h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: plan.snap, onchange: e => { plan.snap = e.target.checked; Store.touch(); } }), 'Snap to grid'),
-        h('label', { class: 'row small', title: 'Stage or set width' }, 'W', h('input', { class: 'inp', type: 'number', min: 2, max: 200, value: plan.w || 12, style: { width: '64px', padding: '3px 6px' }, onchange: e => { plan.w = Math.max(2, +e.target.value || 12); Store.touch(); drawMain(); } })),
-        h('label', { class: 'row small', title: 'Stage or set depth' }, 'D', h('input', { class: 'inp', type: 'number', min: 2, max: 200, value: plan.d || 8, style: { width: '64px', padding: '3px 6px' }, onchange: e => { plan.d = Math.max(2, +e.target.value || 8); Store.touch(); drawMain(); } })),
-        h('select', { class: 'inp', style: { width: 'auto', padding: '3px 6px' }, onchange: e => { plan.unit = e.target.value; Store.touch(); drawMain(); } }, ['m', 'ft'].map(u => h('option', { selected: u === (plan.unit || 'm') }, u))), h('span', { class: 'grow' }),
-        h('button', { class: 'btn primary', id: 'playBtn', onclick: play }, icon('play', 15), 'Play'),
-        h('button', { class: 'btn', onclick: printPlan }, icon('print', 15), 'Print'),
-        h('button', { class: 'btn danger', onclick: async () => { if (await confirmBox(`Delete “${plan.name}”?`)) { stopPlayback(); P.stage.plans = P.stage.plans.filter(p => p !== plan); plan = P.stage.plans[0]; UI.planId = plan && plan.id; sel = null; Store.touch(); drawAll(); } } }, icon('trash', 15))), svg,
-        h('div', { class: 'small muted', style: { textAlign: 'center' } }, (P.mode === 'photo' ? 'Top-down view: the camera position is at the bottom. Drag lights, modifiers, backdrops and talent marks into place; label each with its power or modifier.' : 'Stage Right is on the left of the diagram (the actor faces the audience).')));
-    }
-    const drawLeftLight = () => { $$('.frame-i .grow', left).forEach((el, i) => { if (P.stage.plans[i]) el.textContent = P.stage.plans[i].name; }); };
-    function drawRight(onlyFrames) {
-      right.innerHTML = ''; if (!plan) return;
-      right.append(h('div', { class: 'row', style: { marginBottom: '8px' } }, h('h3', { class: 'grow', style: { fontSize: '15px' } }, 'Frames'),
-        h('button', { class: 'btn sm', title: 'Duplicate the current positions as a new frame', onclick: () => { const f = frame(); const nf = { id: uid(), name: 'Frame ' + (plan.frames.length + 1), notes: '', pos: JSON.parse(JSON.stringify(f.pos)) }; plan.frames.splice(plan.cur + 1, 0, nf); plan.cur++; Store.touch(); drawAll(); } }, icon('plus', 13), 'Frame')));
-      right.append(h('div', { class: 'frames' }, plan.frames.map((f, i) => h('div', { class: 'frame-i' + (i === plan.cur ? ' on' : ''), onclick: () => { stopPlayback(); goFrame(i); } }, h('span', { class: 'n' }, i + 1), h('span', { class: 'grow', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name || 'Frame ' + (i + 1)),
-        plan.frames.length > 1 ? ibtn('trash', 'Delete frame', e => { e.stopPropagation(); plan.frames.splice(i, 1); plan.cur = clamp(plan.cur, 0, plan.frames.length - 1); Store.touch(); drawAll(); }, 'danger') : null))));
-      const f = frame();
-      right.append(h('div', { class: 'field', style: { marginTop: '12px' } }, h('label', { class: 'lbl' }, 'Frame name'), h('input', { class: 'inp', value: f.name, oninput: e => { f.name = e.target.value; Store.touch(); const el = $$('.frame-i', right)[plan.cur]; if (el) el.children[1].textContent = f.name || 'Frame'; } })),
-        h('div', { class: 'field' }, h('label', { class: 'lbl' }, 'Director\'s notes for this moment'), h('textarea', { class: 'inp', rows: 4, value: f.notes, placeholder: 'Who moves, why, on which line…', oninput: e => { f.notes = e.target.value; Store.touch(); } })));
-      const it = plan.items.find(i => i.id === sel);
-      if (it) {
-        const pos = f.pos[it.id];
-        right.append(h('div', { class: 'nav-sep' }), h('h3', { style: { fontSize: '15px', marginBottom: '8px' } }, KINDS[it.kind].label),
-          h('div', { class: 'field' }, h('label', { class: 'lbl' }, 'Label'), h('input', { class: 'inp', value: it.label, oninput: e => { it.label = e.target.value; Store.touch(); const g = itemEls.get(it.id); if (g) { g.replaceChildren(...shapeFor(it)); } } })),
-          h('div', { id: 'posRead', class: 'small muted', style: { marginBottom: '8px' } }, posText(pos)),
-          it.kind === 'camera' ? h('div', { class: 'field' }, h('label', { class: 'lbl' }, `Field of view: ${it.fov || 40}° (≈ ${Math.round(18 / Math.tan((it.fov || 40) * Math.PI / 360))} mm on Super 35)`), h('input', { type: 'range', min: 10, max: 120, value: it.fov || 40, style: { width: '100%' }, oninput: e => { it.fov = +e.target.value; const g = itemEls.get(it.id); if (g) g.replaceChildren(...shapeFor(it)); e.target.previousSibling.textContent = `Field of view: ${it.fov}° (≈ ${Math.round(18 / Math.tan(it.fov * Math.PI / 360))} mm on Super 35)`; Store.touch(); } })) : null,
-          h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, STAGE_COLORS.concat(['#8a8f98']).map(c => h('button', { class: 'sw' + (c === it.color ? ' on' : ''), style: { background: c }, 'aria-label': c, onclick: () => { it.color = c; itemEls.get(it.id).style.setProperty('--c', c); Store.touch(); drawRight(); } }))),
-          h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => { pos.r = ((pos.r || 0) - 15); applyPos(itemEls.get(it.id), pos); Store.touch(); } }, icon('rotate', 14), '−15°'), h('button', { class: 'btn sm', onclick: () => { pos.r = ((pos.r || 0) + 15); applyPos(itemEls.get(it.id), pos); Store.touch(); } }, icon('rotate', 14), '+15°'), h('span', { class: 'grow' }),
-            h('button', { class: 'btn sm danger', onclick: () => { plan.items = plan.items.filter(x => x !== it); plan.frames.forEach(fr => delete fr.pos[it.id]); sel = null; Store.touch(); drawAll(); } }, icon('trash', 14), 'Remove')));
-      }
-    }
-    function printPlan() {
-      const node = h('div', { class: 'print-doc' }, h('h1', {}, `Blocking — ${plan.name}`), h('div', { class: 'sub' }, P.title));
-      plan.frames.forEach((f, i) => { const sv = makeStageSvg(false, plan); plan.items.forEach(it => { const g = S('g', { class: 'item', style: `--c:${it.color}` }, shapeFor(it)); applyPos(g, f.pos[it.id] || { x: 500, y: 300 }); sv.append(g); }); sv.style.maxWidth = '100%';
-        node.append(h('div', { style: { pageBreakInside: 'avoid', marginBottom: '14pt' } }, h('h3', {}, `${i + 1}. ${f.name}`), sv, f.notes ? h('p', {}, f.notes) : null)); });
-      printNode(node);
-    }
-    function drawAll() { stopPlayback(); drawLeft(); drawMain(); drawRight(); }
-    drawAll();
+  /* ---------------- blocking: the panels ---------------- */
+  function drawLeft(plan) {
+    morph(left, [h('div', { class: 'row', 'data-key': 'plans-h', style: { marginBottom: '8px' } }, h('h3', { class: 'grow', style: { fontSize: '15px' } }, 'Plans'), h('button', { class: 'btn sm primary', onclick: () => { stopPlayback(); vm.addPlan(); } }, icon('plus', 13), 'New')),
+      ...vm.plans.map(p => h('div', { class: 'frame-i' + (p === plan ? ' on' : ''), 'data-key': 'plan:' + p.id, style: { marginBottom: '6px' }, onclick: () => { stopPlayback(); vm.openPlan(p.id); } }, h('span', { class: 'grow' }, p.name), h('span', { class: 'small muted' }, p.frames.length + 'f'))),
+      ...(plan ? [h('div', { class: 'nav-sep', 'data-key': 'sep' }), h('h3', { 'data-key': 'add-h', style: { fontSize: '13px', textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--muted)', marginBottom: '8px' } }, 'Add to stage'),
+        h('div', { class: 'palette-g', 'data-key': 'palette' }, vm.kinds.map(([k, v]) => h('button', { class: 'btn sm', onclick: () => addKind(k, v) }, icon('plus', 13), v.label))),
+        h('button', { class: 'btn sm', 'data-key': 'actors', style: { marginTop: '8px', width: '100%' }, onclick: () => { stopPlayback(); const n = vm.addActors(); toast(n ? `Added ${n} actor${n > 1 ? 's' : ''} from the script` : 'No new characters to add', !n); } }, icon('wand', 14), 'Actors from script')] : [])]);
+  }
+  function drawMain(plan) {
+    if (!plan) { svg = null; svgKey = ''; return main.replaceChildren(h('div', { class: 'empty', style: { margin: 'auto' } }, h('h3', {}, 'Plan your blocking'), h('p', { style: { maxWidth: '46ch' } }, 'Lay out actors, furniture and doors on a top-down stage. Add frames to choreograph who moves where, then play it back.'), h('button', { class: 'btn primary', onclick: () => vm.addPlan() }, icon('plus', 15), 'Create first plan'))); }
+    morph(mainBar, [h('input', { class: 'inp', value: plan.name, style: { maxWidth: '280px', fontWeight: 650 }, oninput: e => vm.setPlan('name', e.target.value) }),
+      h('select', { class: 'inp', style: { maxWidth: '280px' }, onchange: e => vm.setPlan('sceneId', e.target.value) }, h('option', { value: '', selected: !plan.sceneId }, 'Scene: any'), vm.scenes.map(s => h('option', { value: s.id, selected: s.id === plan.sceneId }, `${s.num}. ${s.label}`.slice(0, 50)))),
+      h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: !!plan.snap, onchange: e => vm.setPlan('snap', e.target.checked) }), 'Snap to grid'),
+      h('label', { class: 'row small', title: 'Stage or set width' }, 'W', h('input', { class: 'inp', type: 'number', min: 2, max: 200, value: plan.w || 12, style: { width: '64px', padding: '3px 6px' }, onchange: e => vm.setPlan('w', e.target.value) })),
+      h('label', { class: 'row small', title: 'Stage or set depth' }, 'D', h('input', { class: 'inp', type: 'number', min: 2, max: 200, value: plan.d || 8, style: { width: '64px', padding: '3px 6px' }, onchange: e => vm.setPlan('d', e.target.value) })),
+      h('select', { class: 'inp', style: { width: 'auto', padding: '3px 6px' }, onchange: e => vm.setPlan('unit', e.target.value) }, StageModel.UNITS.map(u => h('option', { selected: u === (plan.unit || 'm') }, u))), h('span', { class: 'grow' }),
+      h('button', { class: 'btn primary', id: 'playBtn', onclick: play }, icon('play', 15), playing ? 'Stop' : 'Play'),
+      h('button', { class: 'btn', onclick: printPlan }, icon('print', 15), 'Print'),
+      h('button', { class: 'btn danger', onclick: async () => { if (await confirmBox(`Delete “${plan.name}”?`)) { stopPlayback(); vm.removePlan(); } } }, icon('trash', 15))]);
+    mainNote.textContent = vm.isPhoto ? 'Top-down view: the camera position is at the bottom. Drag lights, modifiers, backdrops and talent marks into place; label each with its power or modifier.' : 'Stage Right is on the left of the diagram (the actor faces the audience).';
+    const sv = syncStage(plan);
+    if (main.children[0] !== mainBar || main.children[1] !== sv || main.children[2] !== mainNote) main.replaceChildren(mainBar, sv, mainNote);
+  }
+  function drawRight(plan) {
+    if (!plan) return morph(right, []);
+    const f = vm.frame, it = vm.item, pos = it && vm.posOf(it.id);
+    morph(right, [h('div', { class: 'row', 'data-key': 'frames-h', style: { marginBottom: '8px' } }, h('h3', { class: 'grow', style: { fontSize: '15px' } }, 'Frames'),
+      h('button', { class: 'btn sm', title: 'Duplicate the current positions as a new frame', onclick: () => { stopPlayback(); vm.addFrame(); } }, icon('plus', 13), 'Frame')),
+      h('div', { class: 'frames', 'data-key': 'frames' }, plan.frames.map((fr, i) => h('div', { class: 'frame-i' + (i === plan.cur ? ' on' : ''), 'data-key': fr.id, onclick: () => { stopPlayback(); goFrame(i); } }, h('span', { class: 'n' }, String(i + 1)), h('span', { class: 'grow', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, fr.name || 'Frame ' + (i + 1)),
+        plan.frames.length > 1 ? ibtn('trash', 'Delete frame', e => { e.stopPropagation(); stopPlayback(); vm.removeFrame(i); }, 'danger') : null))),
+      h('div', { class: 'field', 'data-key': 'fname:' + f.id, style: { marginTop: '12px' } }, h('label', { class: 'lbl' }, 'Frame name'), h('input', { class: 'inp', value: f.name, oninput: e => vm.setFrame('name', e.target.value) })),
+      h('div', { class: 'field', 'data-key': 'fnotes:' + f.id }, h('label', { class: 'lbl' }, 'Director\'s notes for this moment'), h('textarea', { class: 'inp', rows: 4, value: f.notes, placeholder: 'Who moves, why, on which line…', oninput: e => vm.setFrame('notes', e.target.value) })),
+      ...(it ? [h('div', { class: 'nav-sep', 'data-key': 'isep' }), h('h3', { 'data-key': 'ikind', style: { fontSize: '15px', marginBottom: '8px' } }, StageModel.KINDS[it.kind].label),
+        h('div', { class: 'field', 'data-key': 'ilabel:' + it.id }, h('label', { class: 'lbl' }, 'Label'), h('input', { class: 'inp', value: it.label, oninput: e => vm.setItem(it.id, 'label', e.target.value) })),
+        h('div', { id: 'posRead', 'data-key': 'pos', class: 'small muted', style: { marginBottom: '8px' } }, vm.posText(pos)),
+        it.kind === 'camera' ? h('div', { class: 'field', 'data-key': 'fov:' + it.id }, h('label', { class: 'lbl' }, `Field of view: ${it.fov || 40}° (≈ ${StageModel.focal(it.fov)} mm on Super 35)`), h('input', { type: 'range', min: 10, max: 120, value: it.fov || 40, style: { width: '100%' }, oninput: e => vm.setItem(it.id, 'fov', e.target.value) })) : null,
+        h('div', { class: 'row wrap', 'data-key': 'colors', style: { marginBottom: '10px' } }, StageModel.COLORS.concat([StageModel.GREY]).map(c => h('button', { class: 'sw' + (c === it.color ? ' on' : ''), style: { background: c }, 'aria-label': c, onclick: () => vm.setItem(it.id, 'color', c) }))),
+        h('div', { class: 'row', 'data-key': 'iacts' }, h('button', { class: 'btn sm', onclick: () => vm.rotate(it.id, -15) }, icon('rotate', 14), '−15°'), h('button', { class: 'btn sm', onclick: () => vm.rotate(it.id, 15) }, icon('rotate', 14), '+15°'), h('span', { class: 'grow' }),
+          h('button', { class: 'btn sm danger', onclick: () => { stopPlayback(); vm.removeItem(it.id); } }, icon('trash', 14), 'Remove'))] : [])]);
   }
 
   /* ---------------- cue sheet ---------------- */
-  function cues() {
-    const scenes = getScenes(P); const CT = ['LX', 'SND', 'VID', 'FLY', 'SET', 'FX', 'OTHER'];
-    const wrap2 = h('div', { class: 'page' }), tb = h('tbody'); body.append(wrap2);
-    wrap2.append(h('div', { class: 'page-h' }, h('h2', {}, 'Cue sheet'), h('span', { class: 'grow' }),
-      h('button', { class: 'btn', onclick: fromScript }, icon('wand', 15), 'Import cues from script'),
-      h('button', { class: 'btn primary', onclick: () => { P.cues.push({ id: uid(), cue: '', type: 'LX', sceneId: (scenes[scenes.length - 1] || {}).id || '', at: '', desc: '', note: '' }); Store.touch(); fill(); setTimeout(() => { const i = $$('tbody tr:last-child input', wrap2)[0]; i && i.focus(); }, 20); } }, icon('plus', 15), 'Add cue'),
-      h('button', { class: 'btn', onclick: () => download(slug(P.title) + '-cues.csv', toCSV([['Cue', 'Type', 'Scene', 'Trigger', 'Description', 'Notes'], ...P.cues.map(c => [c.cue, c.type, (scenes.find(s => s.id === c.sceneId) || {}).num || '', c.at, c.desc, c.note])]), 'text/csv') }, icon('download', 15), 'CSV'),
-      h('button', { class: 'btn', onclick: () => printTable('Cue sheet', ['Cue', 'Type', 'Sc', 'Trigger', 'Description', 'Notes'], P.cues.map(c => [c.cue, c.type, (scenes.find(s => s.id === c.sceneId) || {}).num || '', c.at, c.desc, c.note])) }, icon('print', 15), 'Print')),
-      h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Cue', 'Type', 'Scene', 'Trigger (line / action)', 'Description', 'Notes', ''].map(x => h('th', {}, x)))), tb));
-    function fromScript() {
-      let n = 0, scene = '';
-      P.blocks.forEach(b => {
-        if (b.type === 'scene') scene = b.id;
-        if (b.type === 'cue' && b.text.trim() && !P.cues.some(c => c.src === b.id)) {
-          const [a, ...r] = b.text.split(/\s+[-—:]\s+/); const t = (a.match(/^[A-Z]+/) || ['OTHER'])[0];
-          P.cues.push({ id: uid(), src: b.id, cue: a, type: CT.includes(t) ? t : 'OTHER', sceneId: scene, at: '', desc: r.join(' — ') || '', note: '' }); n++;
-        }
-      });
-      Store.touch(); fill(); toast(n ? `Imported ${n} cue${n > 1 ? 's' : ''}` : 'No new cues found — use the “Light / Sound Cue” element in the script.', !n);
-    }
-    function fill() {
-      tb.innerHTML = '';
-      if (!P.cues.length) tb.append(h('tr', {}, h('td', { colspan: 7 }, h('div', { class: 'empty', style: { padding: '30px' } }, 'No cues yet.'))));
-      P.cues.forEach((c, i) => tb.append(h('tr', {},
-        h('td', { style: { width: '110px' } }, h('input', { class: 'cell', value: c.cue, placeholder: 'LX 12', style: { fontWeight: 700 }, oninput: e => { c.cue = e.target.value; Store.touch(); } })),
-        h('td', { style: { width: '95px' } }, h('select', { class: 'cell', onchange: e => { c.type = e.target.value; Store.touch(); } }, CT.map(t => h('option', { selected: t === c.type }, t)))),
-        h('td', { style: { width: '120px' } }, h('select', { class: 'cell', onchange: e => { c.sceneId = e.target.value; Store.touch(); } }, h('option', { value: '' }, '—'), scenes.map(s => h('option', { value: s.id, selected: s.id === c.sceneId }, 'Sc ' + s.num)))),
-        h('td', {}, h('input', { class: 'cell', value: c.at, placeholder: 'On “…the clock is patient.”', oninput: e => { c.at = e.target.value; Store.touch(); } })),
-        h('td', {}, h('input', { class: 'cell', value: c.desc, placeholder: 'What happens', oninput: e => { c.desc = e.target.value; Store.touch(); } })),
-        h('td', {}, h('input', { class: 'cell', value: c.note, placeholder: 'Standby, timing…', oninput: e => { c.note = e.target.value; Store.touch(); } })),
-        h('td', { style: { whiteSpace: 'nowrap' } }, ibtn('search', 'Pin this cue to a line in the script', () => pinCue(c)), ibtn('up', 'Move up', () => { if (i) { [P.cues[i - 1], P.cues[i]] = [P.cues[i], P.cues[i - 1]]; Store.touch(); fill(); } }), ibtn('down', 'Move down', () => { if (i < P.cues.length - 1) { [P.cues[i + 1], P.cues[i]] = [P.cues[i], P.cues[i + 1]]; Store.touch(); fill(); } }), ibtn('trash', 'Delete', () => { P.cues.splice(i, 1); Store.touch(); fill(); }, 'danger')))));
-    }
-    function pinCue(c) {
-      let from = 0, to = P.blocks.length; const sc = scenes.find(x => x.id === c.sceneId); if (sc) { from = sc.idx; to = sc.end; }
-      const list = h('div', { class: 'sr-list' }), anchorId = cueAnchor(P, c);
-      P.blocks.slice(from, to).forEach(b => list.append(h('div', { class: 'sr-row' + (b.id === anchorId ? ' on' : ''), onclick: () => { c.anchor = b.id; if (!c.at) c.at = stripRich(b.text).slice(0, 60); Store.touch(); dlg.close(); fill(); toast('Cue pinned to that line'); } },
-        h('span', { class: 'pill' }, b.type), h('div', { class: 'sr-t' }, h('b', {}, stripRich(b.text).slice(0, 90) || '(empty)')))));
-      const dlg = modal({ title: `Pin “${c.cue || 'cue'}” to a line`, wide: true, body: h('div', {}, h('p', { class: 'muted', style: { marginTop: 0 } }, 'Pick the line the cue happens on. The calling script puts the GO there, and a STANDBY a few lines earlier.'), list), buttons: [c.anchor ? { label: 'Unpin', onClick: () => { delete c.anchor; Store.touch(); fill(); } } : { label: 'Cancel' }, { label: 'Close', primary: true }] });
-    }
-    fill();
+  function pinCue(id) {
+    const ch = vm.pinChoices(id); if (!ch) return; const c = ch.cue;
+    const list = h('div', { class: 'sr-list' }, ch.lines.map(b => h('div', { class: 'sr-row' + (b.id === ch.current ? ' on' : ''), onclick: () => { vm.pin(id, b.id); dlg.close(); toast('Cue pinned to that line'); } },
+      h('span', { class: 'pill' }, b.type), h('div', { class: 'sr-t' }, h('b', {}, stripRich(b.text).slice(0, 90) || '(empty)')))));
+    const dlg = modal({ title: `Pin “${c.cue || 'cue'}” to a line`, wide: true, body: h('div', {}, h('p', { class: 'muted', style: { marginTop: 0 } }, 'Pick the line the cue happens on. The calling script puts the GO there, and a STANDBY a few lines earlier.'), list), buttons: [c.anchor ? { label: 'Unpin', onClick: () => vm.unpin(id) } : { label: 'Cancel' }, { label: 'Close', primary: true }] });
+  }
+  const addCue = () => { const c = vm.addCue(); setTimeout(() => { const i = body.querySelector(`tr[data-key="${c.id}"] input`); i && i.focus(); }, 20); };
+  const importCues = () => { const n = vm.importCues(); toast(n ? `Imported ${n} cue${n > 1 ? 's' : ''}` : 'No new cues found — use the “Light / Sound Cue” element in the script.', !n); };
+  function drawCues() {
+    const P = vm.P, scenes = vm.scenes, list = vm.cues, cell = (c, k, ph, st) => h('input', { class: 'cell', value: c[k], placeholder: ph, style: st, oninput: e => vm.setCue(c.id, k, e.target.value) });
+    morph(body, [h('div', { class: 'page', 'data-key': 'cues' }, h('div', { class: 'page-h' }, h('h2', {}, 'Cue sheet'), h('span', { class: 'grow' }),
+      h('button', { class: 'btn', onclick: importCues }, icon('wand', 15), 'Import cues from script'),
+      h('button', { class: 'btn primary', onclick: addCue }, icon('plus', 15), 'Add cue'),
+      h('button', { class: 'btn', onclick: () => download(slug(P.title) + '-cues.csv', toCSV(vm.csvRows()), 'text/csv') }, icon('download', 15), 'CSV'),
+      h('button', { class: 'btn', onclick: () => printTable('Cue sheet', ['Cue', 'Type', 'Sc', 'Trigger', 'Description', 'Notes'], vm.printRows()) }, icon('print', 15), 'Print')),
+      h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, ['Cue', 'Type', 'Scene', 'Trigger (line / action)', 'Description', 'Notes', ''].map(x => h('th', {}, x)))),
+        h('tbody', {}, list.length ? list.map(c => h('tr', { 'data-key': c.id },
+          h('td', { style: { width: '110px' } }, cell(c, 'cue', 'LX 12', { fontWeight: 700 })),
+          h('td', { style: { width: '95px' } }, h('select', { class: 'cell', onchange: e => vm.setCue(c.id, 'type', e.target.value) }, StageModel.CUE_TYPES.map(t => h('option', { selected: t === c.type }, t)))),
+          h('td', { style: { width: '120px' } }, h('select', { class: 'cell', onchange: e => vm.setCue(c.id, 'sceneId', e.target.value) }, h('option', { value: '', selected: !c.sceneId }, '—'), scenes.map(s => h('option', { value: s.id, selected: s.id === c.sceneId }, 'Sc ' + s.num)))),
+          h('td', {}, cell(c, 'at', 'On “…the clock is patient.”')), h('td', {}, cell(c, 'desc', 'What happens')), h('td', {}, cell(c, 'note', 'Standby, timing…')),
+          h('td', { style: { whiteSpace: 'nowrap' } }, ibtn('search', 'Pin this cue to a line in the script', () => pinCue(c.id)), ibtn('up', 'Move up', () => vm.moveCue(c.id, -1)), ibtn('down', 'Move down', () => vm.moveCue(c.id, 1)), ibtn('trash', 'Delete', () => vm.removeCue(c.id), 'danger'))))
+          : [h('tr', { 'data-key': 'none' }, h('td', { colspan: 7 }, h('div', { class: 'empty', style: { padding: '30px' } }, 'No cues yet.')))])))]);
   }
 
   /* ---------------- calling script / prompt book ---------------- */
-  function calling() {
-    const scenes = getScenes(P), lead = Math.max(1, +UI.standbyLead || 3), pg = paginate(P);
-    const wrap2 = h('div', { class: 'page', style: { maxWidth: '1100px' } }), sheet = h('div', { class: 'mini ' + P.mode + ' calling' });
-    const go = new Map(), sb = new Map(); let unpinned = 0;
-    P.cues.forEach(c => { const id = cueAnchor(P, c); if (!id) { unpinned++; return; } const i = P.blocks.findIndex(b => b.id === id); (go.get(id) || go.set(id, []).get(id)).push(c);
-      let j = Math.max(0, i - lead); const sc = scenes.find(s => s.idx <= i && s.end > i); if (sc) j = Math.max(sc.idx, j); const sid = P.blocks[j].id; if (sid !== id) (sb.get(sid) || sb.set(sid, []).get(sid)).push(c); });
+  function drawCalling() {
+    const P = vm.P, lead = vm.lead, pg = paginate(P), C = vm.calling(), rows = [];
     let lastPage = -1;
     P.blocks.forEach((b, i) => {
-      const pp = pg.blockPage[i], g = go.get(b.id) || [], s2 = sb.get(b.id) || [];
-      if (pp !== lastPage) { sheet.append(h('div', { class: 'call-page' }, `Page ${pg.labels[pp]}`)); lastPage = pp; }
-      sheet.append(h('div', { class: 'call-row' }, h('div', { class: 'call-cues' }, s2.map(c => h('span', { class: 'cq sb' }, `STBY ${c.cue}`)), g.map(c => h('span', { class: 'cq go', title: c.desc }, `${c.cue} GO`))),
-        h('div', { class: 'rb t-' + b.type, style: { paddingTop: ['paren', 'dialogue'].includes(b.type) ? 0 : '.8em' } }, richHTML(b.type === 'character' ? cueText(b) : b.text).replace(/^$/, '&nbsp;') && h('span', { html: richHTML(b.type === 'character' ? cueText(b) : b.text) }))));
+      const pp = pg.blockPage[i], g = C.go.get(b.id) || [], s2 = C.standby.get(b.id) || [];
+      if (pp !== lastPage) { rows.push(h('div', { class: 'call-page' }, `Page ${pg.labels[pp]}`)); lastPage = pp; }
+      rows.push(h('div', { class: 'call-row' }, h('div', { class: 'call-cues' }, s2.map(c => h('span', { class: 'cq sb' }, `STBY ${c.cue}`)), g.map(c => h('span', { class: 'cq go', title: c.desc }, `${c.cue} GO`))),
+        h('div', { class: 'rb t-' + b.type, style: { paddingTop: ['paren', 'dialogue'].includes(b.type) ? 0 : '.8em' } }, h('span', { html: richHTML(b.type === 'character' ? cueText(b) : b.text) }))));
     });
-    wrap2.append(h('div', { class: 'page-h' }, h('h2', {}, TERM.calling), h('span', { class: 'grow' }), h('label', { class: 'row small' }, 'Standby lines before GO', h('input', { class: 'inp', type: 'number', min: 1, max: 20, value: lead, style: { width: '64px' }, onchange: e => { UI.standbyLead = +e.target.value || 3; Router.refresh(); } })),
-      h('button', { class: 'btn primary', onclick: () => printNode(h('div', { class: 'print-doc calling-print' }, h('h1', {}, `${P.title} — Calling script`), h('div', { class: 'sub' }, `${P.cues.length} cues · standby ${lead} lines before each GO`), sheet.cloneNode(true))) }, icon('print', 15), 'Print prompt book')),
-      unpinned ? h('div', { class: 'csalert' }, `${unpinned} cue${unpinned > 1 ? 's are' : ' is'} not pinned to a line yet — they will not appear below. In the Cue sheet, use the magnifier on each row to pin it.`) : null,
-      P.cues.length ? sheet : h('div', { class: 'empty' }, h('h3', {}, 'No cues yet'), h('p', {}, 'Add cues in the Cue sheet (or type a “Light / Sound Cue” line in the script) and pin each one to a line.')));
-    body.append(wrap2);
+    const sheet = h('div', { class: 'mini ' + P.mode + ' calling', 'data-key': 'sheet' }, rows), n = vm.cues.length;
+    morph(body, [h('div', { class: 'page', 'data-key': 'calling', style: { maxWidth: '1100px' } }, h('div', { class: 'page-h' }, h('h2', {}, TERM.calling), h('span', { class: 'grow' }), h('label', { class: 'row small' }, 'Standby lines before GO', h('input', { class: 'inp', type: 'number', min: 1, max: 20, value: lead, style: { width: '64px' }, onchange: e => vm.setLead(e.target.value) })),
+      h('button', { class: 'btn primary', onclick: () => printNode(h('div', { class: 'print-doc calling-print' }, h('h1', {}, `${P.title} — Calling script`), h('div', { class: 'sub' }, `${n} cues · standby ${lead} lines before each GO`), body.querySelector('.calling').cloneNode(true))) }, icon('print', 15), 'Print prompt book')),
+      C.unpinned ? h('div', { class: 'csalert', 'data-key': 'unpinned' }, `${C.unpinned} cue${C.unpinned > 1 ? 's are' : ' is'} not pinned to a line yet — they will not appear below. In the Cue sheet, use the magnifier on each row to pin it.`) : null,
+      n ? sheet : h('div', { class: 'empty', 'data-key': 'nocues' }, h('h3', {}, 'No cues yet'), h('p', {}, 'Add cues in the Cue sheet (or type a “Light / Sound Cue” line in the script) and pin each one to a line.')))]);
   }
-  return () => { stopPlay(); root.parentElement.classList.remove('noscroll'); };
+
+  function draw() {
+    const tab = vm.tab, photo = vm.isPhoto;
+    morph(toolbar, [h('div', { class: 'seg' }, (photo ? [['blocking', 'Set & lighting diagrams']] : [['blocking', 'Blocking & set plans'], ['cues', 'Cue sheet'], ['calling', TERM.calling]]).map(([k, l]) => h('button', { class: tab === k ? 'on' : '', onclick: () => vm.setTab(k) }, l))),
+      h('span', { class: 'small muted' }, tab === 'blocking' ? 'Drag actors, set pieces, cameras and lights on a scaled plan; add frames to choreograph movement, then press Play.' : tab === 'cues' ? 'Lighting, sound, flys and scene changes — pin each one to a line of the script.' : 'The stage manager’s prompt book: your script with every standby and GO in the margin.')]);
+    if (tab !== shown) {
+      stopPlayback(); shown = tab; body.replaceChildren(); body.style.overflow = tab === 'blocking' ? 'hidden' : 'auto';
+      if (tab === 'blocking') body.append(stageWrap); else { svg = null; svgKey = ''; }
+    }
+    if (tab === 'blocking') { const plan = vm.plan; drawLeft(plan); drawMain(plan); drawRight(plan); }
+    else if (tab === 'cues') drawCues(); else drawCalling();
+  }
+  const unbind = bindView(vm, draw);
+  return () => { stopPlayback(); clearTimeout(animT); unbind(); root.parentElement.classList.remove('noscroll'); };
 };
 
 /* where a cue lives in the script: an explicit pin, the script's own cue line, or its trigger text */
-function cueAnchor(P, c) {
-  if (c.anchor && P.blocks.some(b => b.id === c.anchor)) return c.anchor;
-  if (c.src && P.blocks.some(b => b.id === c.src)) return c.src;
-  if (c.at && c.at.trim()) {
-    const q = c.at.toLowerCase().replace(/[“”"]/g, '').trim(), sc = c.sceneId && getScenes(P).find(s => s.id === c.sceneId), from = sc ? sc.idx : 0, to = sc ? sc.end : P.blocks.length;
-    const b = P.blocks.slice(from, to).find(b => stripRich(b.text).toLowerCase().includes(q)) || P.blocks.find(b => stripRich(b.text).toLowerCase().includes(q)); if (b) return b.id;
-  }
-  return null;
-}
+const cueAnchor = (P, c) => StageModel.anchor(P, c, getScenes(P), t => stripRich(t));

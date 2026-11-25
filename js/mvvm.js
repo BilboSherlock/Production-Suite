@@ -2,9 +2,8 @@
 /* ===================================================================
    MVVM foundation
 
-   Every section is moving to three layers. Sections that have moved:
-   Tasks, Schedule, Call sheets, Reports, Daily reports, Live desk, Podcast suite (planner + recorder). (The rest still build their screens and edit data in one
-   function; they keep working unchanged while they move over one by one.)
+   Every section is built in three layers:
+   Tasks, Schedule, Call sheets, Reports, Daily reports, Live desk, Podcast suite (planner + recorder), Budget, Props & wardrobe, Breakdown, Cast & crew (with Casting), Locations, Shot list, Storyboard, Lookbook, Pitch deck, Script editor, Corkboard, Gear & rentals, Overview, Releases & permits, Selects, Run of show, Setups & looks, Photo shot list, Shoot brief, Series bible, Blocking & cues, Script supervisor (take log + lined script), Projects home, Contacts, Settings, Search, Region dialog.
 
    MODEL       js/models/<feature>.model.js
                The project data (plain objects inside Store.P) plus the rules

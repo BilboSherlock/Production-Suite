@@ -8,8 +8,7 @@
    =================================================================== */
 
 /* ---------- draft snapshots ---------- */
-const snapData = P => JSON.stringify(P.blocks.map(b => [b.id, b.type, b.text, b.rev || '', b.num || '', b.note || '', b.lockPg || 0, b.om ? 1 : 0]));
-const parseSnap = s => JSON.parse(s.data).map(([id, type, text, rev, num, note, lockPg, om]) => { const b = { id, type, text }; if (rev) b.rev = rev; if (num) b.num = num; if (note) b.note = note; if (lockPg) b.lockPg = lockPg; if (om) b.om = true; return b; });
+const snapData = P => ScriptModel.snap(P), parseSnap = s => ScriptModel.parse(s.data);
 function takeSnapshot(P, name, auto = false) {
   P.snapshots = P.snapshots || []; const data = snapData(P), last = P.snapshots[P.snapshots.length - 1];
   if (last && last.data === data) return last;                       // nothing changed since the last one

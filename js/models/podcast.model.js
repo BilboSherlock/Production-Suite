@@ -35,12 +35,13 @@ const PodcastModel = {
   /* filmed shows */
   SHOTS: ['Wide / master', 'Host single', 'Guest single', 'Two-shot', 'Over-the-shoulder', 'Close-up / detail', 'Overhead / product', 'Roaming / handheld', 'Screen capture'],
   ASPECTS: ['16:9', '9:16', '1:1', '4:5'],
-  GEAR_READY: ['Picked up', 'In Studio', 'On set', 'Returned'],
+  /* gear rules are shared with photo shoots: js/models/gear.model.js (loaded first) */
+  GEAR_READY: GearModel.READY,
 
   SEG_FIELDS: ['title', 'dur', 'bullets', 'cues', 'guestId', 'sponsorId', 'status', 'notes', 'priority', 'gfx', 'cam'],
   GUEST_FIELDS: ['name', 'pronouns', 'title', 'bio', 'questions', 'nogo', 'link', 'timeZone', 'plugs', 'release', 'onCamera'],
   SPONSOR_FIELDS: ['name', 'slot', 'duration', 'code', 'url', 'points', 'copy', 'recorded', 'onScreen'],
-  GEAR_FIELDS: ['cat', 'name', 'qty', 'source', 'rate', 'days', 'pickup', 'ret', 'status', 'notes'],
+  GEAR_FIELDS: GearModel.FIELDS,
   CAMERA_FIELDS: ['name', 'shot', 'who', 'lens', 'cardMins', 'notes'],
   VIDEO_FIELDS: ['aspect', 'res', 'iso', 'clips', 'set', 'lighting', 'wardrobe', 'thumbnail'],
   NOTE_FIELDS: ['titleOptions', 'summary', 'links', 'watch', 'tags'],
@@ -83,7 +84,7 @@ const PodcastModel = {
   sponsor: (o = {}) => Object.assign({ id: newId(), name: 'Sponsor Name', slot: 'Mid-roll 1', duration: '60s', code: '', url: '',
     points: '• Mention 30-day money-back guarantee\n• Emphasize ease of setup\n• Must state vanity URL clearly twice',
     copy: 'This episode is brought to you by… Visit [URL] and use promo code [CODE] for 20% off.', recorded: false, onScreen: '' }, o),
-  gearItem: (cat, o = {}) => Object.assign({ id: newId(), cat, name: '', qty: 1, source: 'Owned', rate: '', days: '', pickup: '', ret: '', status: 'Needed', notes: '' }, o),
+  gearItem: (cat, o) => GearModel.item(cat, o),
   camera: (o = {}) => Object.assign({ id: newId(), name: 'Cam A', shot: 'Wide / master', who: '', lens: '', cardMins: '', notes: '' }, o),
 
   /* ---------- templates ---------- */
@@ -210,17 +211,17 @@ const PodcastModel = {
     return lines.join('\n');
   },
 
-  /* ---------- gear ---------- */
-  gearDays: (g, nDays) => +g.days || nDays || 1,
-  gearCost: (g, nDays) => (+g.qty || 0) * (+g.rate || 0) * PodcastModel.gearDays(g, nDays),
-  gearStats(pd, nDays) { return { count: pd.gear.length, ready: pd.gear.filter(g => PodcastModel.GEAR_READY.includes(g.status)).length, total: pd.gear.reduce((a, g) => a + PodcastModel.gearCost(g, nDays), 0) }; },
-  filterGear(gear, q = '', status = '') { q = q.toLowerCase(); return gear.filter(g => (!status || g.status === status) && (!q || JSON.stringify(Object.values(g)).toLowerCase().includes(q))); },
-  addGear(pd, cat) { const g = PodcastModel.gearItem(cat); pd.gear.push(g); return g; },
-  updateGear(g, k, v) { return PodcastModel.setField(g, PodcastModel.GEAR_FIELDS, k, v); },
-  duplicateGear(pd, id) { const i = pd.gear.findIndex(g => g.id === id); if (i < 0) return null; const c = Object.assign({}, pd.gear[i], { id: newId() }); pd.gear.splice(i + 1, 0, c); return c; },
-  removeGear(pd, id) { pd.gear = pd.gear.filter(g => g.id !== id); },
+  /* ---------- gear (the shared rules in js/models/gear.model.js; pd is the holder of pd.gear) ---------- */
+  gearDays: (g, nDays) => GearModel.days(g, nDays),
+  gearCost: (g, nDays) => GearModel.cost(g, nDays),
+  gearStats: (pd, nDays) => GearModel.stats(pd, nDays),
+  filterGear: (gear, q, status) => GearModel.filter(gear, q, status),
+  addGear: (pd, cat) => GearModel.add(pd, cat),
+  updateGear: (g, k, v) => GearModel.update(g, k, v),
+  duplicateGear: (pd, id) => GearModel.duplicate(pd, id),
+  removeGear: (pd, id) => { GearModel.remove(pd, id); },
   /** add a starter kit (a list of items) */
-  addKit(pd, items) { items.forEach(g => pd.gear.push(g)); return items.length; },
+  addKit: (pd, items) => GearModel.addKit(pd, items),
   VIDEO_KIT: [['Cameras & Video (Vodcast)', 'Camera body — Cam A wide (e.g. mirrorless with clean HDMI)', 1], ['Cameras & Video (Vodcast)', 'Camera body — Cam B / C singles', 2],
     ['Cameras & Video (Vodcast)', 'Standard zoom lens (24-70mm f/2.8 or similar)', 3], ['Cameras & Video (Vodcast)', 'Tripods with fluid heads', 3],
     ['Cameras & Video (Vodcast)', 'Key + fill LED panels with softboxes', 2], ['Cameras & Video (Vodcast)', 'Back / hair light', 1],
@@ -229,25 +230,10 @@ const PodcastModel = {
     ['Storage & Media', 'Fast camera cards (V90 SD / CFexpress, 256GB)', 4], ['Other / Field Kit', 'Clapper slate for sync', 1]],
   videoKit() { return PodcastModel.VIDEO_KIT.map(([cat, name, qty]) => PodcastModel.gearItem(cat, { name, qty })); },
   /** budget lines for gear with a day rate (kept in step by `auto`); returns how many */
-  syncBudget(P, pd, catMap, nDays) {
-    let n = 0; P.budget = P.budget || [];
-    pd.gear.filter(g => (+g.rate || 0) > 0).forEach(g => {
-      const key = 'gear:' + g.id; let l = P.budget.find(x => x.auto === key);
-      if (!l) { l = { id: newId(), auto: key }; P.budget.push(l); }
-      Object.assign(l, { cat: (catMap && catMap[g.cat]) || 'Audio Engineering', desc: `${g.name}${g.source && g.source !== 'Owned' ? ' (' + g.source + ')' : ''}`, qty: (+g.qty || 1) * PodcastModel.gearDays(g, nDays), unit: 'Day', rate: +g.rate || 0 });
-      n++;
-    });
-    return n;
-  },
-  /** printable pack list: a group row per category, then ☐ rows */
-  packRows(pd, cats) { return cats.flatMap(c => { const ls = pd.gear.filter(g => g.cat === c); return ls.length ? [{ grp: c }, ...ls.map(g => ['☐', g.cat, g.name, g.qty, g.source, g.status])] : []; }); },
-  /** rental items grouped by rental house: [{ source, items, total }] */
-  rentals(pd, nDays) {
-    const by = new Map();
-    pd.gear.filter(g => g.source && g.source !== 'Owned').forEach(g => { if (!by.has(g.source)) by.set(g.source, []); by.get(g.source).push(g); });
-    return [...by].map(([source, items]) => ({ source, items, total: items.reduce((a, g) => a + PodcastModel.gearCost(g, nDays), 0) }));
-  },
-  gearCsv(pd, nDays) { return [['Category', 'Item', 'Qty', 'Source', 'Rate/day', 'Days', 'Total', 'Pick-up', 'Return', 'Status', 'Notes'], ...pd.gear.map(g => [g.cat, g.name, g.qty, g.source, g.rate, PodcastModel.gearDays(g, nDays), PodcastModel.gearCost(g, nDays), g.pickup, g.ret, g.status, g.notes])]; },
+  syncBudget: (P, pd, catMap, nDays) => GearModel.syncBudget(P, pd, catMap, nDays, 'Audio Engineering'),
+  packRows: (pd, cats) => GearModel.packRows(pd, cats),
+  rentals: (pd, nDays) => GearModel.rentals(pd, nDays),
+  gearCsv: (pd, nDays) => GearModel.csv(pd, nDays),
 
   /* ---------- chapters, clips & text ---------- */
   /** "m:ss" or "h:mm:ss" (what YouTube and podcast apps read) */

@@ -368,34 +368,8 @@ const cur = () => Store.P;
 /* ===================================================================
    Script model
    =================================================================== */
-const TYPES = {
-  screenplay: [
-    { k: 'scene', label: 'Scene Heading' }, { k: 'action', label: 'Action' }, { k: 'character', label: 'Character' },
-    { k: 'paren', label: 'Parenthetical' }, { k: 'dialogue', label: 'Dialogue' }, { k: 'transition', label: 'Transition' }, { k: 'shot', label: 'Shot' }, { k: 'act', label: 'Act Break (TV)' },
-  ],
-  stage: [
-    { k: 'act', label: 'Act' }, { k: 'scene', label: 'Scene' }, { k: 'setting', label: 'Setting / Description' }, { k: 'character', label: 'Character' },
-    { k: 'paren', label: 'Parenthetical' }, { k: 'dialogue', label: 'Dialogue' }, { k: 'direction', label: 'Stage Direction' }, { k: 'cue', label: 'Light / Sound Cue' },
-  ],
-  photo: [{ k: 'scene', label: 'Setup / Look' }, { k: 'action', label: 'Notes' }],
-  av: [
-    { k: 'scene', label: 'Segment Heading' }, { k: 'video', label: 'Video' }, { k: 'audio', label: 'Audio' }, { k: 'super', label: 'On-screen Text / Graphic' }, { k: 'sfx', label: 'Music / SFX' },
-  ],
-  podcast: [
-    { k: 'scene', label: 'Scene / Segment' }, { k: 'character', label: 'Speaker / Voice' }, { k: 'paren', label: 'Mic / Delivery Note' },
-    { k: 'dialogue', label: 'Dialogue / Copy' }, { k: 'sfx', label: 'Sound Effect (SFX)' }, { k: 'music', label: 'Music Cue' },
-    { k: 'clip', label: 'Audio Clip / Tape' }, { k: 'sponsor', label: 'Sponsor / Ad Read' },
-  ],
-};
-const CAPS = new Set(['scene', 'character', 'transition', 'shot', 'act', 'cue']);
-const NEXT = {
-  screenplay: { scene: 'action', action: 'action', character: 'dialogue', paren: 'dialogue', dialogue: 'action', transition: 'scene', shot: 'action', act: 'scene' },
-  stage: { act: 'scene', scene: 'setting', setting: 'character', character: 'dialogue', paren: 'dialogue', dialogue: 'character', direction: 'character', cue: 'character' },
-  photo: { scene: 'action', action: 'action' },
-  av: { scene: 'video', video: 'audio', super: 'audio', audio: 'video', sfx: 'video' },
-  podcast: { scene: 'character', character: 'dialogue', paren: 'dialogue', dialogue: 'character', sfx: 'character', music: 'character', clip: 'character', sponsor: 'character' },
-};
-const DEFAULT_TYPE = { screenplay: 'action', stage: 'direction', av: 'video', photo: 'action', podcast: 'dialogue' };
+/* element types, capitals, what Enter makes next and each mode's default line: js/models/script.model.js */
+const { TYPES, CAPS, NEXT, DEFAULT_TYPE } = ScriptModel;
 const gapOf = t => (t === 'paren' || t === 'dialogue') ? 0 : (t === 'scene' || t === 'act') ? 2 : 1;
 const HEAD_DASH = /\s+(?:-{1,3}|–|—)\s+/;
 const TOD_WORD = /\b(DAWN|SUNRISE|MORNING|DAY|NOON|AFTERNOON|EVENING|SUNSET|DUSK|TWILIGHT|NIGHT|MIDNIGHT|CONTINUOUS|LATER|MOMENTS LATER|SAME|SAME TIME)\b/i;
@@ -661,40 +635,16 @@ function autosizeAll(root) {
 const UI = { scene: null, shotScene: 'all', callDay: null, peopleTab: 'cast', bdMode: 'scene', stageTab: 'blocking' };
 
 /* ---------- plural / singular handling for tag matching ---------- */
-const IRREG = { bus: 'buses', gas: 'gases', man: 'men', woman: 'women', child: 'children', foot: 'feet', tooth: 'teeth', knife: 'knives', wife: 'wives', shelf: 'shelves', leaf: 'leaves', life: 'lives', thief: 'thieves', wolf: 'wolves', mouse: 'mice', person: 'people', glass: 'glasses', scarf: 'scarves', loaf: 'loaves', half: 'halves', jeans: 'jeans', pants: 'pants', trousers: 'trousers', scissors: 'scissors', glasses: 'glasses' };
-const IRREG_REV = Object.fromEntries(Object.entries(IRREG).map(([a, b]) => [b, a]));
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/* regex source matching a phrase and its plural / singular form (last word only) */
-function pluralPattern(text) {
-  const m = /^([\s\S]*?)([A-Za-z]+)$/.exec(text); if (!m) return reEsc(text);
-  const pre = reEsc(m[1]), w = m[2], lw = w.toLowerCase(); let alt;
-  const irr = IRREG[lw] ? lw : IRREG_REV[lw];
-  if (irr && IRREG[irr] === irr) alt = reEsc(w);
-  else if (irr) alt = `(?:${reEsc(irr)}|${reEsc(IRREG[irr])})`;
-  else if (/ies$/.test(lw) && lw.length > 4) alt = reEsc(w.slice(0, -3)) + '(?:y|ies)';
-  else if (/(?:ch|sh|x|z|s)es$/.test(lw)) alt = reEsc(w.slice(0, -2)) + '(?:es)?';
-  else if (/(?:us|is|ss)$/.test(lw)) alt = reEsc(w) + '(?:es)?';
-  else if (/[^s]s$/.test(lw)) alt = reEsc(w.slice(0, -1)) + 's?';
-  else if (/[^aeiou]y$/.test(lw)) alt = reEsc(w.slice(0, -1)) + '(?:y|ies)';
-  else if (/(?:s|x|z|ch|sh)$/.test(lw)) alt = reEsc(w) + '(?:es)?';
-  else alt = reEsc(w) + '(?:e?s)?';
-  return pre + alt;
-}
-/* canonical singular form, so "mop" / "mops" / "Mops" are one item */
-function singularKey(text) {
-  const t = String(text || '').trim().toLowerCase().replace(/\s+/g, ' '), m = /^([\s\S]*?)([a-z]+)$/.exec(t); if (!m) return t; let w = m[2];
-  if (IRREG_REV[w]) w = IRREG_REV[w];
-  else if (/(?:us|is|ss)$/.test(w)) { /* already singular */ }
-  else if (/ies$/.test(w) && w.length > 4) w = w.slice(0, -3) + 'y';
-  else if (/(?:ches|shes|xes|zes|sses)$/.test(w)) w = w.slice(0, -2);
-  else if (/[^s]s$/.test(w)) w = w.slice(0, -1);
-  return m[1] + w;
-}
+/* regex source matching a phrase and its plural / singular form, and its canonical singular key
+   (the rules live in js/models/breakdown.model.js) */
+const pluralPattern = text => BreakdownModel.plural(text);
+const singularKey = text => BreakdownModel.key(text);
 /* a tag's / item's assigned characters, always as a list (older data stored a single name) */
 const whoOf = t => Array.isArray(t.who) ? t.who : (t.who ? [t.who] : []);
 
 /* the location a scene is actually shot at: the linked Location profile if set, otherwise the heading's text */
-function locName(P, s) { const m = P.sceneMeta[s.id], L = m && m.locationId && P.locations.find(l => l.id === m.locationId); return (L && L.name) || s.location || ''; }
+const locName = (P, s) => LocationsModel.placeOf(P, s);
 
 
 /* ===================================================================

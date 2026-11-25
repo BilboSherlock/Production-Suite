@@ -9,7 +9,7 @@ const NAV = [
   { label: 'Produce', items: [['schedule', 'Schedule', 'calendar'], ['callsheet', 'Call sheets', 'clipboard'], ['people', 'Cast, crew & casting', 'users'], ['locations', 'Locations', 'pin'], ['budget', 'Budget', 'dollar'], ['tasks', 'Tasks', 'tasks'], ['reports', 'Reports', 'chart']] },
   { label: 'Direct', items: [['stage', 'Blocking & cues', 'stage'], ['takes', 'Script supervisor', 'list']] },
 ];
-const MODE_LABEL = { screenplay: 'Screenplay', stage: 'Stage play', av: 'AV script', photo: 'Photo shoot', podcast: 'Podcast' };
+const MODE_LABEL = HomeModel.MODE_LABEL;   // kept for older callers
 const effectiveTheme = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 function toggleTheme() {
   const t = effectiveTheme() === 'dark' ? 'light' : 'dark';
@@ -142,65 +142,7 @@ function mountView(main, view, arg) {
   catch (e) { console.error(e); root.append(h('div', { class: 'page' }, h('div', { class: 'empty' }, h('h3', {}, 'Something went wrong in this view'), h('p', {}, String(e.message || e))))); }
 }
 
-/* ---------------- dashboard ---------------- */
-function renderHome() {
-  const app = $('#app'); app.innerHTML = ''; app.style.display = 'block'; app.style.overflow = 'auto';
-  const list = Object.values(Store.projects).sort((a, b) => b.updated - a.updated);
-  const grid = h('div', { class: 'projects' });
-  grid.append(h('button', { class: 'card pcard newcard', onclick: newProjectModal }, h('span', {}, icon('plus', 30)), h('span', {}, 'New project')));
-  list.forEach(p => {
-    const st = scriptStats(p);
-    grid.append(h('div', { class: 'card pcard ' + p.mode, tabindex: 0, role: 'link', 'aria-label': `Open ${p.title || 'Untitled'}`, onclick: () => location.hash = `#/p/${p.id}`, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) location.hash = `#/p/${p.id}`; } },
-      h('div', { class: 'cover' }, p.title || 'Untitled'),
-      h('div', { class: 'body' }, h('div', { class: 'row wrap' }, h('span', { class: 'pill accent' }, MODE_LABEL[p.mode] || 'Screenplay'), p.series ? h('span', { class: 'pill' }, `${p.series.name} · ${epCode(p.series)}`) : null, h('span', { class: 'small muted' }, `${st.scenes} ${({ av: 'segments', podcast: 'segments', photo: 'setups' })[p.mode] || 'scenes'} · ~${st.pages} pp`)),
-        h('div', { class: 'small muted' }, 'Edited ' + new Date(p.updated).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + (p.meta.author ? ' · ' + p.meta.author : '')),
-        h('div', { class: 'acts' }, h('button', { class: 'btn sm ghost', onclick: e => { e.stopPropagation(); duplicateProject(p); } }, icon('copy', 14), 'Duplicate'),
-          h('button', { class: 'btn sm ghost', onclick: e => { e.stopPropagation(); download(slug(p.title) + '.studiobindahh.json', JSON.stringify(p), 'application/json'); } }, icon('download', 14), 'Backup'),
-          h('span', { class: 'grow' }), h('button', { class: 'icon-btn danger', title: 'Delete project', onclick: async e => { e.stopPropagation(); if (await confirmBox(`Delete “${p.title}” and everything in it? This can't be undone — consider downloading a backup first.`)) { await Store.remove(p.id); renderHome(); toast('Project deleted'); } } }, icon('trash', 16))))));
-  });
-  app.append(
-    h('div', { class: 'home-top' }, h('span', { class: 'logo', style: { padding: 0 } }, h('span', { class: 'mark' }, icon('film', 18)), 'StudioBindahh'), h('span', { class: 'grow' }),
-      h('button', { class: 'btn sm', id: 'syncBtn', onclick: () => Sync.panel() }, icon('cloud', 15), 'Folder sync', h('i', { id: 'syncDot', class: 'syncdot' })),
-      h('button', { class: 'btn sm collab-btn' + (Collab.sess ? ' live' : ''), onclick: () => Collab.sess ? Collab.livePanel() : Collab.joinModal() }, icon('users', 15), Collab.sess ? 'Live session' : 'Join a session'),
-      h('a', { class: 'btn sm', href: '#/budgets' }, icon('dollar', 15), 'Budgets'),
-      h('a', { class: 'btn sm', href: '#/contacts' }, icon('users', 15), `Contacts${Contacts.list.length ? ' (' + Contacts.list.length + ')' : ''}`),
-      h('button', { class: 'btn sm', onclick: () => openSettings(null) }, icon('wand', 15), 'Settings'),
-      h('button', { class: 'btn sm', onclick: backupAll }, icon('download', 15), 'Back up all'),
-      h('button', { class: 'btn sm', onclick: showShortcuts }, icon('keyboard', 15), 'Shortcuts'), themeBtn()),
-    ...(location.protocol !== 'file:' ? [] : [h('div', { style: { background: 'var(--accent-soft)', color: 'var(--text)', padding: '10px 26px', fontSize: '14px', borderBottom: '1px solid var(--border)' } },
-      h('b', {}, 'Heads up: '), 'you opened this from a file. Browsers keep file-based projects separate from the localhost version (Start StudioBindahh.bat). Always open it the same way — or use “Back up all” and Import to move projects between the two.')]),
-    h('div', { class: 'hero' }, h('h1', {}, 'Write it. Plan it. Direct it.'),
-      h('p', {}, 'One workspace for screenplays, stage plays, AV scripts and photo shoots — from the first draft or brief through breakdown, shot lists, scheduling, call sheets, gear, releases and selects. Everything is saved privately in this browser.'),
-      h('div', { class: 'row wrap' }, h('button', { class: 'btn primary', onclick: newProjectModal }, icon('plus', 16), 'New project'),
-        h('button', { class: 'btn', onclick: importProjectModal }, icon('upload', 16), 'Import file'),
-        h('button', { class: 'btn', onclick: () => createSample('screenplay') }, icon('film', 16), 'Try a sample screenplay'),
-        h('button', { class: 'btn', onclick: () => createSample('stage') }, icon('stage', 16), 'Try a sample stage play'),
-        h('button', { class: 'btn', onclick: () => createSample('av') }, icon('layout', 16), 'Try a sample AV script'),
-        h('button', { class: 'btn', onclick: () => createSample('photo') }, icon('camera', 16), 'Try a sample photo shoot'),
-        h('button', { class: 'btn', onclick: () => createSample('podcast') }, icon('cue', 16), 'Try a sample podcast'))),
-    grid);
-  if (!Store.persist) app.prepend(h('div', { style: { background: 'var(--warn)', color: '#000', padding: '8px 16px', fontSize: '14px' } }, 'Your browser is blocking local storage, so projects will be lost when you close this tab. Use the Backup button to save your work.'));
-}
-
-function newProjectModal() {
-  const title = h('input', { class: 'inp', placeholder: 'Untitled project' });
-  const radio = (v, t, d, on) => h('label', {}, h('input', { type: 'radio', name: 'mode', value: v, checked: on }), h('b', {}, t), h('span', { class: 'small muted' }, d));
-  const regSel = h('select', { class: 'inp' }, Object.entries(REGIONS).map(([k, r]) => h('option', { value: k, selected: k === ((Prefs && Prefs.region) || 'US') }, `${r.short} — ${r.label} standards`)));
-  const box = h('div', {}, h('div', { class: 'field' }, h('label', { class: 'lbl' }, 'Title'), title), h('div', { class: 'field' }, h('label', { class: 'lbl' }, 'Industry standards'), regSel),
-    h('label', { class: 'lbl' }, 'Format'), h('div', { class: 'typepick' },
-      radio('screenplay', 'Screenplay', 'Film & TV. Scene headings, action, dialogue, transitions, shots.', true),
-      radio('stage', 'Stage play', 'Acts, scenes, centered dialogue, stage directions, light & sound cues.'),
-      radio('av', 'Two-column AV script', 'Video on the left, audio on the right — commercials, corporate films, explainers, documentaries.'),
-      radio('podcast', 'Podcast & Audio', 'Episode rundown & clock, guest prep, sponsor reads, audio drama scripts, SFX and show notes.'),
-      radio('photo', 'Photo shoot', 'Brief, setups & looks, shot list, run of show, gear, releases and selects — for editorial, campaign and large-scale commercial shoots.')));
-  modal({ title: 'New project', body: box, buttons: [{ label: 'Cancel' }, { label: 'Create', primary: true, onClick: async () => {
-    const mode = $('input[name=mode]:checked', box).value, p = blankProject(mode, title.value.trim() || 'Untitled project'); if (regSel.value !== p.settings.region) applyRegion(p, regSel.value);
-    p.blocks = [{ id: uid(), type: 'scene', text: '' }, { id: uid(), type: DEFAULT_TYPE[mode], text: '' }];
-    if (mode === 'photo') p.settings.nav = { preset: 'photo', on: PRESETS.photo.on };
-    if (mode === 'podcast') p.settings.nav = { preset: 'podcast', on: PRESETS.podcast.on };
-    await Store.add(p); location.hash = `#/p/${p.id}/${mode === 'podcast' ? 'rundown' : 'script'}`;
-  } }] });
-}
+/* the projects home (dashboard), new project and import: js/home.js */
 async function createAVSample() {
   const p = blankProject('av', 'Ride the City — 60s Explainer'), B = (t, x) => ({ id: uid(), type: t, text: x });
   p.blocks = [B('scene', 'SEGMENT 1 — THE HOOK'), B('video', 'Drone shot rising over a misty harbour at dawn.'), B('audio', 'NARRATOR: Every morning, thousands of us make the same trip.'), B('super', 'LOWER THIRD: Maya Ortiz, daily commuter'), B('sfx', 'MUSIC: low strings in, building.'),
@@ -264,46 +206,6 @@ async function createSample(mode) {
   p.tasks.push(Object.assign(newTask('Lock the main location', 'doing'), { dept: 'Production', priority: 'High', due: soon(2) }), Object.assign(newTask('Get insurance certificate', 'todo'), { dept: 'Production', due: soon(5) }), Object.assign(newTask('Source the hero prop', 'done'), { dept: 'Art' }), Object.assign(newTask('Cast the supporting roles', 'todo'), { dept: 'Direction', due: soon(-1) }));
   linkLegacyTags(p);
   await Store.add(p); location.hash = `#/p/${p.id}/script`;
-}
-async function duplicateProject(p) {
-  const c = JSON.parse(JSON.stringify(p)); c.id = uid(); c.title = p.title + ' (copy)'; c.created = c.updated = Date.now();
-  if (c.series) c.series.ep = Math.max(0, ...episodesOf(c.series.id).filter(e => e.series.season === c.series.season).map(e => e.series.ep)) + 1;
-  await Store.add(c); renderHome(); toast('Project duplicated');
-}
-function importProjectModal() {
-  const info = h('p', { style: { marginTop: 0 }, class: 'muted' }, 'Choose a StudioBindahh backup (.json), or a script as a PDF, Fountain (.fountain, .txt), Highland (.highland) or Final Draft (.fdx).');
-  const box = h('div', {}, info, h('label', { class: 'lbl' }, 'If importing a script, treat it as'), h('div', { class: 'typepick' },
-    h('label', {}, h('input', { type: 'radio', name: 'imode', value: 'screenplay', checked: true }), h('b', {}, 'Screenplay')), h('label', {}, h('input', { type: 'radio', name: 'imode', value: 'stage' }), h('b', {}, 'Stage play'))));
-  const m = modal({ title: 'Import', body: box, buttons: [{ label: 'Cancel' }, { label: 'Choose file…', primary: true, onClick: () => { const mode = $('input[name=imode]:checked', box).value; pickFile('.json,.fountain,.txt,.fdx,.md,.pdf,.highland,.zip').then(f => f && doImport(f, mode)); } }] });
-}
-async function doImport(f, mode) {
-  if (/\.pdf$/i.test(f.name)) {
-    await pdfImportFlow(f, { mode, apply: [{ label: 'Create project', run: async res => {
-      const mt = res.meta || {}, p = blankProject(res.mode, mt.title || f.name.replace(/\.pdf$/i, ''));
-      p.blocks = res.blocks; p.meta.author = mt.author || ''; p.meta.credit = mt.credit || 'Written by'; p.meta.source = mt.source || ''; p.meta.contact = mt.contact || ''; p.meta.draft = mt.draft || '';
-      if (res.keepNumbers) p.settings.sceneNumLock = true;
-      await Store.add(p); location.hash = `#/p/${p.id}/script`; toast(`Imported “${p.title}” — ${res.blocks.length} elements`);
-    } }] });
-    return;
-  }
-  try {
-    const txt = await readScriptFile(f); let p;
-    if (/\.json$/i.test(f.name)) { const j = JSON.parse(txt);
-      if (j && Array.isArray(j.contacts)) { let n = 0; j.contacts.forEach(c => { if (c && c.name && !Contacts.list.some(x => x.id === c.id || (x.name === c.name && (x.email || '') === (c.email || '')))) { Contacts.list.push(c); n++; } }); await Contacts.save(); if (j.prefs && Array.isArray(j.prefs.on) && !Array.isArray(j.projects)) { } if (!Array.isArray(j.projects)) { toast(`Imported ${n} contact${n === 1 ? '' : 's'}`); renderHome(); return; } else toast(`Merged ${n} contact${n === 1 ? '' : 's'}`); }
-      if (j && Array.isArray(j.projects)) { let n = 0; for (const x of j.projects) { if (!x || !Array.isArray(x.blocks)) continue; const q = migrate(x); if (Store.projects[q.id]) { q.id = uid(); q.title += ' (imported)'; } await Store.add(q); n++; } toast(`Restored ${n} project${n === 1 ? '' : 's'}`); renderHome(); return; }
-      p = migrate(j); if (!Array.isArray(p.blocks)) throw new Error('Not a StudioBindahh project'); if (Store.projects[p.id]) { p.id = uid(); p.title += ' (imported)'; } }
-    else {
-      const res = /\.fdx$/i.test(f.name) ? parseFDX(txt) : parseFountain(txt, mode); if (!res.blocks.length) throw new Error('No script content found');
-      p = blankProject(mode, res.meta.title || f.name.replace(/\.[^.]+$/, '')); p.blocks = res.blocks; p.meta.author = res.meta.author || res.meta.authors || ''; p.meta.credit = res.meta.credit || 'Written by'; p.meta.draft = res.meta['draft date'] || res.meta.date || ''; p.meta.contact = res.meta.contact || '';
-    }
-    await Store.add(p); location.hash = `#/p/${p.id}/script`; toast('Imported “' + p.title + '”');
-  } catch (e) { toast('Import failed: ' + (e.message || e), true); }
-}
-
-function backupAll() {
-  const all = Object.values(Store.projects); if (!all.length) return toast('There are no projects to back up yet.', true);
-  download('studiobindahh-all-projects.json', JSON.stringify({ studiobindahh: 'bundle', version: 3, exported: Date.now(), projects: all, contacts: Contacts.list, prefs: { preset: Prefs.preset, on: Prefs.on } }), 'application/json');
-  toast(`Backed up ${all.length} project${all.length === 1 ? '' : 's'}`);
 }
 /* Ctrl+K: search the whole project */
 document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && Store.P && !document.querySelector('.overlay')) { e.preventDefault(); openSearch(); } });

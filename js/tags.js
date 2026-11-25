@@ -20,7 +20,7 @@ function newShotTag(P, name, color) {
 const tagAdd = (s, id) => { if (!(s.tags || []).includes(id)) s.tags = [...(s.tags || []), id]; };
 const tagDel = (s, id) => { s.tags = (s.tags || []).filter(x => x !== id); };
 /* does a shot pass the tag filter? ids = Set; all = must carry every tag */
-const passTags = (s, F) => !F || !F.ids.size || (F.all ? [...F.ids].every(i => (s.tags || []).includes(i)) : [...F.ids].some(i => (s.tags || []).includes(i))) || (F.ids.has('__none') && !(s.tags || []).length);
+const passTags = (s, F) => ShotsModel.passTags(s, F);   // (js/models/shots.model.js)
 
 /* the chips shown on a shot, with a + button */
 function tagChips(P, shot, onChange) {
@@ -77,4 +77,4 @@ function tagFilterBar(P, F, onChange) {
     F.ids.size > 1 ? h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: F.all, onchange: e => { F.all = e.target.checked; onChange(); } }), 'match all') : null,
     F.ids.size ? h('button', { class: 'btn sm ghost', onclick: () => { F.ids.clear(); onChange(); } }, 'Clear') : null, h('span', { class: 'grow' }), h('button', { class: 'btn sm ghost', onclick: () => openTagManager(P, onChange) }, 'Manage tags'));
 }
-const shotTagNames = (P, s) => (s.tags || []).map(id => (tagById(P, id) || {}).name).filter(Boolean).join(', ');
+const shotTagNames = (P, s) => ShotsModel.tagNames(P, s);

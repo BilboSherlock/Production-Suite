@@ -2,33 +2,13 @@
 /* ===================================================================
    Settings — which sections (tabs) are shown, with presets per
    production type. Global default, optionally overridden per project.
+   VIEW (and where the global choice, Prefs, is stored). Rules:
+   js/models/settings.model.js; the dialog's draft and commands:
+   js/viewmodels/settings.vm.js.
    =================================================================== */
-const FEATURE_DEFS = [   // key, label, group, icon
-  ['overview', 'Overview', 'Project', 'layout'], ['brief', 'Shoot brief', 'Project', 'file'], ['bible', 'Series bible', 'Project', 'layers'],
-  ['script', 'Script', 'Write', 'pen'], ['rundown', 'Episode rundown', 'Write', 'cue'], ['setups', 'Setups & looks', 'Write', 'grid'], ['cards', 'Corkboard', 'Write', 'cards'],
-  ['breakdown', 'Breakdown', 'Prepare', 'tag'], ['shots', 'Shot list', 'Prepare', 'camera'], ['photoshots', 'Photo shot list', 'Prepare', 'camera'], ['board', 'Storyboard', 'Prepare', 'image'],
-  ['lookbook', 'Lookbook', 'Prepare', 'palette'], ['props', 'Props & wardrobe', 'Prepare', 'shirt'], ['pitch', 'Pitch deck', 'Prepare', 'deck'],
-  ['live', 'Live dashboard', 'Produce', 'play'], ['schedule', 'Schedule', 'Produce', 'calendar'], ['runofshow', 'Run of show', 'Produce', 'cue'], ['callsheet', 'Call sheets', 'Produce', 'clipboard'], ['people', 'Cast, crew & casting', 'Produce', 'users'],
-  ['locations', 'Locations', 'Produce', 'pin'], ['gear', 'Gear & rentals', 'Produce', 'box'], ['compliance', 'Releases & permits', 'Produce', 'lock'], ['budget', 'Budget', 'Produce', 'dollar'],
-  ['tasks', 'Tasks', 'Produce', 'tasks'], ['reports', 'Reports', 'Produce', 'chart'],
-  ['stage', 'Blocking & cues', 'Direct', 'stage'], ['takes', 'Script supervisor', 'Direct', 'list'], ['selects', 'Selects & approvals', 'Direct', 'star'],
-];
-const FEATURE_KEYS = FEATURE_DEFS.map(f => f[0]);
-const NAV_GROUPS = ['Project', 'Write', 'Prepare', 'Produce', 'Direct'];
-const PRESETS = {
-  all: { label: 'Everything', desc: 'Every section.', on: FEATURE_KEYS },
-  film: { label: 'Film & TV', desc: 'Script, breakdown, shots, schedule, call sheets, script supervisor.',
-    on: ['overview', 'bible', 'script', 'cards', 'breakdown', 'shots', 'board', 'lookbook', 'props', 'pitch', 'live', 'schedule', 'callsheet', 'people', 'locations', 'budget', 'tasks', 'reports', 'stage', 'takes'] },
-  stage: { label: 'Stage', desc: 'Script, blocking, cues, rehearsals, calling script.',
-    on: ['overview', 'script', 'cards', 'breakdown', 'lookbook', 'props', 'pitch', 'live', 'schedule', 'callsheet', 'people', 'locations', 'budget', 'tasks', 'reports', 'stage'] },
-  av: { label: 'Video / AV', desc: 'Two-column scripts, shots, storyboards, schedule.',
-    on: ['overview', 'script', 'cards', 'breakdown', 'shots', 'board', 'lookbook', 'props', 'live', 'schedule', 'callsheet', 'people', 'locations', 'budget', 'tasks', 'reports'] },
-  podcast: { label: 'Podcast & Audio', desc: 'Episode rundown & clock, guest prep, sponsor reads, audio drama scripts, sound design.',
-    on: ['overview', 'rundown', 'script', 'cards', 'bible', 'breakdown', 'props', 'pitch', 'live', 'schedule', 'callsheet', 'people', 'locations', 'gear', 'budget', 'tasks', 'reports'] },
-  photo: { label: 'Photography', desc: 'Brief, setups, photo shot list, run of show, gear, releases, selects.',
-    on: ['overview', 'brief', 'setups', 'breakdown', 'photoshots', 'lookbook', 'props', 'live', 'schedule', 'runofshow', 'callsheet', 'people', 'locations', 'gear', 'compliance', 'selects', 'stage', 'budget', 'tasks', 'reports'] },
-  writing: { label: 'Writing only', desc: 'Just the script, corkboard and cast.', on: ['overview', 'script', 'cards', 'people', 'pitch'] },
-};
+/* the section lists, presets and folding rules live in the model; these names are kept for older callers
+   (the same arrays and objects, so region.js can still rename labels in place) */
+const { FEATURE_DEFS, FEATURE_KEYS, NAV_GROUPS, PRESETS, FORMAT_PHOTO, FORMAT_NA, NAV_LABELS, HUBS, FOLD_PRESETS, HUB_MOVE, HUB_LABEL } = SettingsModel;
 const Prefs = { preset: 'all', on: [...FEATURE_KEYS], region: 'US', fold: { preset: 'balanced', hubs: null } };
 async function loadPrefs() {
   let v = null;
@@ -40,125 +20,65 @@ async function savePrefs() {
   try { await DB.setMeta('prefs', { preset: Prefs.preset, on: Prefs.on, region: Prefs.region, fold: Prefs.fold }); } catch (e) { }
   try { localStorage.setItem('sb-prefs', JSON.stringify({ preset: Prefs.preset, on: Prefs.on, region: Prefs.region, fold: Prefs.fold })); } catch (e) { }
 }
-/* the set of enabled sections for a project (its own choice, or the global one) */
-/* sections that make no sense for a format are left out of its menu */
-const FORMAT_PHOTO = ['brief', 'setups', 'photoshots', 'runofshow', 'selects'];
-const FORMAT_NA = {
-  screenplay: [...FORMAT_PHOTO, 'rundown'], av: [...FORMAT_PHOTO, 'takes', 'rundown'], stage: [...FORMAT_PHOTO, 'shots', 'takes', 'bible', 'rundown'],
-  photo: ['script', 'rundown', 'cards', 'shots', 'takes', 'bible'],
-  podcast: [...FORMAT_PHOTO, 'shots', 'takes', 'stage', 'board'],
-};
-function featureSet(P) {
-  const nav = P && P.settings && P.settings.nav, on = new Set(nav && Array.isArray(nav.on) ? nav.on : Prefs.on);
-  on.add('overview');
-  if (P) { (FORMAT_NA[P.mode] || []).forEach(k => on.delete(k)); if (P.mode === 'photo') on.add('setups'); if (P.mode === 'podcast') { on.add('rundown'); on.add('gear'); } }   // required entries
-  return on;
-}
+/* the menu rules, with the global choice filled in */
+const featureSet = P => SettingsModel.featureSet(P, Prefs);
 const featureOn = (P, key) => featureSet(P).has(key);
-const NAV_LABELS = {
-  photo: { setups: 'Setups & looks', stage: 'Set & lighting', breakdown: 'Breakdown', props: 'Props & wardrobe', people: 'Talent & crew', lookbook: 'Mood boards' },
-  podcast: { rundown: 'Episode rundown', script: 'Audio script', people: 'Voice cast & guests', props: 'Sound assets & Foley', gear: 'Studio gear & mics', schedule: 'Recording schedule', callsheet: 'Recording call sheet' },
-};
-const featureLabel = (P, key) => (P && NAV_LABELS[P.mode] && NAV_LABELS[P.mode][key]) || (FEATURE_DEFS.find(f => f[0] === key) || [0, key])[1];
-/* ---------------------------------------------------------------
-   Tab folding — related sections share one menu entry with sub-tabs
-   --------------------------------------------------------------- */
-const HUBS = [
-  { id: 'project', label: 'Project', icon: 'layout', members: ['overview', 'brief', 'bible', 'pitch'] },
-  { id: 'write', label: 'Write', icon: 'pen', members: ['script', 'rundown', 'setups', 'cards'] },
-  { id: 'visual', label: 'Visualize', icon: 'image', members: ['board', 'shots', 'photoshots', 'lookbook', 'stage'] },
-  { id: 'elements', label: 'Breakdown', icon: 'tag', members: ['breakdown', 'props', 'locations', 'gear'] },
-  { id: 'plan', label: 'Schedule', icon: 'calendar', members: ['schedule', 'callsheet', 'runofshow'] },
-  { id: 'people', label: 'People', icon: 'users', members: ['people', 'compliance'] },
-  { id: 'money', label: 'Budget & tasks', icon: 'dollar', members: ['budget', 'tasks', 'reports'] },
-  { id: 'set', label: 'On set', icon: 'play', members: ['live', 'takes', 'selects'] },
-];
-const FOLD_PRESETS = { none: { label: 'Off', desc: 'Every section has its own menu entry.', hubs: [] }, balanced: { label: 'Balanced', desc: 'Fold the closely related ones: visuals, breakdown, schedule, people, on set.', hubs: ['visual', 'elements', 'plan', 'people', 'set'] },
-  compact: { label: 'Compact', desc: 'Fold everything into a handful of sections.', hubs: HUBS.map(h => h.id) } };
-/* the format changes which hub a section belongs to and what the hub is called */
-const HUB_MOVE = { stage: { stage: 'set' } };
-const HUB_LABEL = {
-  stage: { visual: 'Design', set: 'Rehearsal & show', elements: 'Breakdown', plan: 'Rehearsals & calls', write: 'Script' },
-  photo: { write: 'Setups', visual: 'Look & lighting', elements: 'Looks & kit', plan: 'Schedule', set: 'Shoot day', people: 'Talent & crew' },
-  av: { visual: 'Visualize', set: 'Production' },
-  podcast: { write: 'Script & rundown', elements: 'Audio assets', plan: 'Recording schedule', people: 'Cast & guests' },
-};
-const hubOfKey = (P, key) => { const mv = P && HUB_MOVE[P.mode] && HUB_MOVE[P.mode][key]; return mv || (HUBS.find(h => h.members.includes(key)) || {}).id; };
-const hubLabel = (P, hub) => (P && HUB_LABEL[P.mode] && HUB_LABEL[P.mode][hub.id]) || hub.label;
-/* which hubs are folded for this project: its own choice, else the global one */
-function foldedHubs(P) {
-  const f = (P && P.settings && P.settings.fold) || Prefs.fold || { preset: 'balanced' };
-  return new Set(Array.isArray(f.hubs) ? f.hubs : (FOLD_PRESETS[f.preset] || FOLD_PRESETS.balanced).hubs);
-}
-/* members of a hub for a project, in menu order, limited to enabled sections */
-function hubMembers(P, hub) {
-  const on = featureSet(P), order = FEATURE_DEFS.map(f => f[0]);
-  const keys = [...new Set([...hub.members, ...Object.keys((HUB_MOVE[P && P.mode] || {})).filter(k => HUB_MOVE[P.mode][k] === hub.id)])].filter(k => hubOfKey(P, k) === hub.id && on.has(k));
-  return keys.sort((a, b) => hub.members.indexOf(a) - hub.members.indexOf(b) || order.indexOf(a) - order.indexOf(b));
-}
-function foldedInfo(P, key) { const hub = HUBS.find(h => h.id === hubOfKey(P, key)); if (!hub || !foldedHubs(P).has(hub.id)) return null; const m = hubMembers(P, hub); return m.length > 1 ? { hub, members: m } : null; }
-function buildNav(P, o = {}) {
-  const on = featureSet(P), groups = NAV_GROUPS.map(g => ({ label: g, items: FEATURE_DEFS.filter(f => f[2] === g && on.has(f[0])).map(f => [f[0], featureLabel(P, f[0]), f[3]]) })).filter(g => g.items.length);
-  if (o.flat) return groups;
-  const done = new Set();
-  groups.forEach(g => { g.items = g.items.map(it => { const fi = foldedInfo(P, it[0]); if (!fi) return it; if (done.has(fi.hub.id)) return null; done.add(fi.hub.id); return ['hub:' + fi.hub.id, hubLabel(P, fi.hub), fi.hub.icon, fi]; }).filter(Boolean); });
-  /* a hub sits where its first member sits; drop the groups it emptied */
-  return groups.filter(g => g.items.length);
-}
+const featureLabel = (P, key) => SettingsModel.featureLabel(P, key);
+const hubOfKey = (P, key) => SettingsModel.hubOfKey(P, key);
+const hubLabel = (P, hub) => SettingsModel.hubLabel(P, hub);
+const foldedHubs = P => SettingsModel.foldedHubs(P, Prefs);
+const hubMembers = (P, hub) => SettingsModel.hubMembers(P, hub, Prefs);
+const foldedInfo = (P, key) => SettingsModel.foldedInfo(P, key, Prefs);
+const buildNav = (P, o) => SettingsModel.buildNav(P, Prefs, o);
+const presetForMode = mode => SettingsModel.presetForMode(mode);
+
 /* the sub-tab bar shown above a folded section */
 function hubTabs(P, view) {
   const fi = foldedInfo(P, view); if (!fi) return null; UI.hubLast = UI.hubLast || {}; UI.hubLast[fi.hub.id] = view;
   return h('div', { class: 'hub-tabs', role: 'tablist', 'aria-label': hubLabel(P, fi.hub) }, h('span', { class: 'hub-name' }, icon(fi.hub.icon, 15), hubLabel(P, fi.hub)), fi.members.map(k => h('a', { class: 'hub-tab' + (k === view ? ' on' : ''), role: 'tab', href: `#/p/${P.id}/${k}` }, featureLabel(P, k))));
 }
 function hubHref(P, item) { const fi = item[3]; UI.hubLast = UI.hubLast || {}; const last = UI.hubLast[fi.hub.id]; return `#/p/${P.id}/${fi.members.includes(last) ? last : fi.members[0]}`; }
-const presetForMode = mode => mode === 'photo' ? 'photo' : '';
 
+/* the "Sections & features" dialog: P = the open project (its choice can apply to just this project), or null */
 function openSettings(P) {
-  const scoped = !!P;                       // opened from inside a project: can apply to just this project
-  let scope = scoped && P.settings.nav ? 'project' : 'global';
-  let cur = new Set(scope === 'project' ? P.settings.nav.on : Prefs.on), curPreset = scope === 'project' ? P.settings.nav.preset : Prefs.preset;
-  const foldSrc = () => (scope === 'project' && P.settings.fold) ? P.settings.fold : Prefs.fold; let foldSet = new Set(foldedHubs(scope === 'project' ? P : null)), foldPreset = foldSrc().preset || 'balanced';
-  const matchFold = () => { const k = Object.keys(FOLD_PRESETS).find(p => FOLD_PRESETS[p].hubs.length === foldSet.size && FOLD_PRESETS[p].hubs.every(x => foldSet.has(x))); foldPreset = k || 'custom'; };
-  const box = h('div');
-  const matchPreset = () => { const k = Object.keys(PRESETS).find(p => PRESETS[p].on.length === cur.size && PRESETS[p].on.every(x => cur.has(x))); curPreset = k || 'custom'; };
-  function draw() {
-    box.replaceChildren(...[
-      scoped ? h('div', { class: 'row', style: { marginBottom: '14px' } }, h('span', { class: 'small muted' }, 'Apply to'), h('div', { class: 'seg' }, [['project', 'This project only'], ['global', 'All projects']].map(([k, l]) => h('button', { class: scope === k ? 'on' : '', onclick: () => { scope = k; cur = new Set(k === 'project' ? (P.settings.nav ? P.settings.nav.on : Prefs.on) : Prefs.on); matchPreset(); foldSet = new Set(foldedHubs(k === 'project' ? P : null)); matchFold(); draw(); } }, l)))) : h('p', { class: 'small muted', style: { marginTop: 0 } }, 'Choose which sections appear in every project’s side menu. Hidden sections keep their data and can be turned back on at any time.'),
-      scoped ? null : h('div', { class: 'row', style: { marginBottom: '14px' } }, h('span', { class: 'small muted' }, 'Default standards for new projects'), h('div', { class: 'seg' }, Object.entries(REGIONS).map(([k, r]) => h('button', { class: Prefs.region === k ? 'on' : '', onclick: e => { Prefs.region = k; [...e.currentTarget.parentNode.children].forEach(b => b.classList.toggle('on', b === e.currentTarget)); } }, `${r.short} · ${r.label}`)))),
-      h('div', { class: 'preset-grid' }, Object.entries(PRESETS).map(([k, p]) => h('button', { class: 'preset' + (curPreset === k ? ' on' : ''), onclick: () => { cur = new Set(p.on); curPreset = k; draw(); } }, h('b', {}, p.label), h('span', { class: 'small muted' }, p.desc)))),
-      h('div', { class: 'feat-cols' }, NAV_GROUPS.map(g => h('div', { class: 'feat-col' }, h('h4', {}, g), FEATURE_DEFS.filter(f => f[2] === g).map(f => h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: cur.has(f[0]), disabled: f[0] === 'overview', onchange: e => { e.target.checked ? cur.add(f[0]) : cur.delete(f[0]); matchPreset(); draw(); } }), icon(f[3], 14), f[1]))))),
-      curPreset === 'custom' ? h('p', { class: 'small muted' }, 'Custom selection.') : null,
-      scoped ? null : deviceSection(),
-      h('h3', { style: { fontSize: '15px', margin: '22px 0 4px' } }, 'Fold related tabs together'),
-      h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, 'Folded sections share one menu entry with sub-tabs across the top — for example Storyboard, Shot list, Lookbook and Blocking under “Visualize”. What goes together adapts to the project’s format.'),
-      h('div', { class: 'preset-grid' }, Object.entries(FOLD_PRESETS).map(([k, p]) => h('button', { class: 'preset' + (foldPreset === k ? ' on' : ''), onclick: () => { foldSet = new Set(p.hubs); foldPreset = k; draw(); } }, h('b', {}, p.label), h('span', { class: 'small muted' }, p.desc)))),
-      h('div', { class: 'feat-cols' }, HUBS.map(hb => { const mem = hb.members.filter(k => !scoped || !P || hubOfKey(P, k) === hb.id).filter(k => FEATURE_DEFS.some(f => f[0] === k)); return h('label', { class: 'fold-opt' }, h('input', { type: 'checkbox', checked: foldSet.has(hb.id), onchange: e => { e.target.checked ? foldSet.add(hb.id) : foldSet.delete(hb.id); matchFold(); draw(); } }), h('span', {}, h('b', {}, scoped && P ? hubLabel(P, hb) : hb.label), h('span', { class: 'small muted', style: { display: 'block' } }, mem.map(k => featureLabel(scoped ? P : null, k)).join(' · ')))); })),
-      scoped && scope === 'project' && P.settings.nav ? h('button', { class: 'btn sm ghost', onclick: () => { P.settings.nav = null; P.settings.fold = null; Store.touch(); m.close(); Router.refresh(); } }, 'Use the global setting for this project') : null].filter(Boolean));
-  }
-  const m = modal({ title: 'Settings — sections & features', wide: true, body: box, buttons: [{ label: 'Cancel' }, { label: 'Save', primary: true, onClick: async () => {
-    cur.add('overview');
-    if (scoped && scope === 'project') { P.settings.nav = { preset: curPreset, on: [...cur] }; P.settings.fold = { preset: foldPreset, hubs: [...foldSet] }; Store.touch(); }
-    else { Prefs.on = [...cur]; Prefs.preset = curPreset; Prefs.fold = { preset: foldPreset, hubs: [...foldSet] }; await savePrefs(); if (scoped && (P.settings.nav || P.settings.fold)) { P.settings.nav = null; P.settings.fold = null; Store.touch(); } }
-    Router.refresh(); toast('Settings saved');
-  } }] });
-  matchPreset(); matchFold(); draw();
+  const vm = new SettingsVM({ project: () => P || null }), box = h('div');
+  const segBtns = (opts, val, set) => h('div', { class: 'seg' }, opts.map(([k, l]) => h('button', { class: val === k ? 'on' : '', onclick: () => set(k) }, l)));
+  const device = vm.scoped ? null : deviceSection();
+  if (device) device._own = true;   // its own view, redrawn by itself
+  const draw = () => morph(box, [
+    vm.scoped ? h('div', { class: 'row', style: { marginBottom: '14px' } }, h('span', { class: 'small muted' }, 'Apply to'), segBtns([['project', 'This project only'], ['global', 'All projects']], vm.scope, k => vm.setScope(k)))
+      : h('p', { class: 'small muted', style: { marginTop: 0 } }, 'Choose which sections appear in every project’s side menu. Hidden sections keep their data and can be turned back on at any time.'),
+    vm.scoped ? null : h('div', { class: 'row', style: { marginBottom: '14px' } }, h('span', { class: 'small muted' }, 'Default standards for new projects'), segBtns(Object.entries(REGIONS).map(([k, r]) => [k, `${r.short} · ${r.label}`]), vm.region, k => vm.setRegion(k))),
+    h('div', { class: 'preset-grid' }, Object.entries(PRESETS).map(([k, p]) => h('button', { class: 'preset' + (vm.preset === k ? ' on' : ''), onclick: () => vm.choosePreset(k) }, h('b', {}, p.label), h('span', { class: 'small muted' }, p.desc)))),
+    h('div', { class: 'feat-cols' }, NAV_GROUPS.map(g => h('div', { class: 'feat-col' }, h('h4', {}, g), FEATURE_DEFS.filter(f => f[2] === g).map(f => h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: vm.has(f[0]), disabled: f[0] === 'overview', onchange: e => vm.toggle(f[0], e.target.checked) }), icon(f[3], 14), f[1]))))),
+    vm.preset === 'custom' ? h('p', { class: 'small muted' }, 'Custom selection.') : null,
+    device,
+    h('h3', { style: { fontSize: '15px', margin: '22px 0 4px' } }, 'Fold related tabs together'),
+    h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, 'Folded sections share one menu entry with sub-tabs across the top — for example Storyboard, Shot list, Lookbook and Blocking under “Visualize”. What goes together adapts to the project’s format.'),
+    h('div', { class: 'preset-grid' }, Object.entries(FOLD_PRESETS).map(([k, p]) => h('button', { class: 'preset' + (vm.foldPreset === k ? ' on' : ''), onclick: () => vm.chooseFold(k) }, h('b', {}, p.label), h('span', { class: 'small muted' }, p.desc)))),
+    h('div', { class: 'feat-cols' }, vm.foldChoices.map(c => h('label', { class: 'fold-opt' }, h('input', { type: 'checkbox', checked: vm.folded(c.hub.id), onchange: e => vm.toggleFold(c.hub.id, e.target.checked) }), h('span', {}, h('b', {}, c.label), h('span', { class: 'small muted', style: { display: 'block' } }, c.members))))),
+    vm.canUseGlobal ? h('button', { class: 'btn sm ghost', onclick: () => { vm.useGlobal(); m.close(); Router.refresh(); } }, 'Use the global setting for this project') : null]);
+  const unbind = bindView(vm, draw);
+  const m = modal({ title: 'Settings — sections & features', wide: true, body: box, onClose: () => { unbind(); if (device && device._unbind) device._unbind(); },
+    buttons: [{ label: 'Cancel' }, { label: 'Save', primary: true, onClick: async () => { await vm.save(); Router.refresh(); toast('Settings saved'); } }] });
 }
 
 /* the device this copy of the app is laid out for (stored per device, not per project) */
 function deviceSection() {
-  const box = h('div', { class: 'dev-sec' });
-  const draw = () => {
-    const cur = Device.profile(), seg = (label, opts, val, set) => h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'small muted' }, label), h('div', { class: 'seg' }, opts.map(([k, l]) => h('button', { class: val === k ? 'on' : '', onclick: () => { set(k); draw(); } }, l))));
+  const vm = new DeviceVM(), box = h('div', { class: 'dev-sec' });
+  const seg = (label, opts, val, set) => h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap' } }, h('span', { class: 'small muted' }, label), h('div', { class: 'seg' }, opts.map(([k, l]) => h('button', { class: val === k ? 'on' : '', onclick: () => set(k) }, l))));
+  box._unbind = bindView(vm, () => {
+    const cur = vm.profile;
     morph(box, [
       h('h3', { style: { fontSize: '15px', margin: '4px 0 4px' } }, 'Device'),
       h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, 'Tailors the layout to the screen this copy of StudioBindahh runs on. Saved on this device only.'),
-      h('div', { class: 'dev-grid' }, Object.entries(DEVICES).map(([k, d]) => h('button', { class: 'dev-card' + (cur === k ? ' on' : ''), 'aria-pressed': String(cur === k), onclick: () => { Device.setProfile(k); draw(); } },
+      h('div', { class: 'dev-grid' }, Object.entries(vm.devices).map(([k, d]) => h('button', { class: 'dev-card' + (cur === k ? ' on' : ''), 'aria-pressed': String(cur === k), onclick: () => vm.setProfile(k) },
         h('span', { class: 'dev-ico' }, icon(k === 'desktop' ? 'monitor' : k === 'ideatab' ? 'tablet' : 'wand', 22)), h('b', {}, d.label), h('span', { class: 'small muted' }, d.desc),
         d.specs ? h('ul', { class: 'dev-specs' }, d.specs.map(x => h('li', {}, x))) : null))),
-      h('div', { class: 'small muted', style: { margin: '8px 0 4px' } }, `In use now: ${Device.form() === 'tablet' ? 'tablet' : 'desktop'} layout · ${innerWidth} × ${innerHeight} layout pixels · ${Device.touchOn() ? 'touch' : 'pointer'} controls`),
-      seg('Touch targets', [['auto', 'Follow device'], ['on', 'Always large'], ['off', 'Always compact']], Device.mode(), k => Device.setMode(k))]);
-  };
-  draw(); return box;
+      h('div', { class: 'small muted', style: { margin: '8px 0 4px' } }, vm.inUse(innerWidth, innerHeight)),
+      seg('Touch targets', [['auto', 'Follow device'], ['on', 'Always large'], ['off', 'Always compact']], vm.mode, k => vm.setMode(k))]);
+  });
+  return box;
 }
 
 /* how to run StudioBindahh on an Android tablet (for example the Lenovo Idea Tab Plus) */
